@@ -13,6 +13,7 @@ sealed interface PaperIntent {
     data class StrokeStarted(val strokeId: String, val tool: PaperTool, val point: NormalizedPoint) : PaperIntent
     data class PointAdded(val strokeId: String, val point: NormalizedPoint) : PaperIntent
     data class StrokeEnded(val strokeId: String) : PaperIntent
+    data class StrokeCancelled(val strokeId: String) : PaperIntent
     data class Erase(val point: NormalizedPoint) : PaperIntent
     data object OpenSettings : PaperIntent
 }

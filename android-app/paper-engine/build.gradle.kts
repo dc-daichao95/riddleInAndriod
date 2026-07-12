@@ -14,6 +14,10 @@ android {
     defaultConfig {
         minSdk = 36
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {

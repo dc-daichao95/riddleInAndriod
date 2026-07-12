@@ -8,13 +8,13 @@ class DissolvePattern(val stages: Int = 14) {
     fun shouldErase(x: Int, y: Int, stage: Int): Boolean {
         if (stage < 0) return false
         if (stage >= stages - 1) return true
-        return pixelHash(x, y).mod(stages) <= stage
+        return pixelHash(x, y) % stages.toLong() <= stage.toLong()
     }
 
-    private fun pixelHash(x: Int, y: Int): Int {
+    private fun pixelHash(x: Int, y: Int): Long {
         var hash = x * 0x9E3779B1.toInt() xor (y * 0x85EBCA6B.toInt())
         hash = hash xor (hash ushr 13)
         hash *= 0xC2B2AE35.toInt()
-        return hash xor (hash ushr 16)
+        return (hash xor (hash ushr 16)).toUInt().toLong()
     }
 }
