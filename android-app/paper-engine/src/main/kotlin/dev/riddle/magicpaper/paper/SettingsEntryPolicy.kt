@@ -6,6 +6,7 @@ import kotlin.math.hypot
 enum class PointerTool {
     FINGER,
     STYLUS,
+    ERASER,
 }
 
 data class TouchContact(
