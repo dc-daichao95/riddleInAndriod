@@ -1,0 +1,13 @@
+[versions]
+agp = "9.2.1"
+coroutines = "1.10.2"
+junit = "4.13.2"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version = "2.2.21" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
