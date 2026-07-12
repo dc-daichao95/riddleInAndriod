@@ -6,11 +6,11 @@
 
 **Architecture:** Keep the existing Rust app untouched and add a modular Kotlin project under `android-app/`. Compose owns navigation/settings/accessibility; a custom `MagicPaperView` owns low-latency input and Canvas animation; pure Kotlin state machines coordinate page submission, OCR/vision routing, Provider streams, and Room memory behind provider-neutral contracts.
 
-**Tech Stack:** Kotlin 2.1.21, Gradle 8.11.1, Android Gradle Plugin 8.10.1, Android API 36, Compose BOM 2025.06.01, Material 3, coroutines 1.10.2, lifecycle 2.9.1, Room 2.7.2, OkHttp 4.12.0, kotlinx-serialization 1.8.1, ML Kit Digital Ink Recognition 18.1.0, JUnit 4.13.2, Turbine 1.2.1, Robolectric 4.14.1.
+**Tech Stack:** Android Studio 2026.1.1, Android Studio JBR 21, Gradle 9.4.1, Android Gradle Plugin 9.2.1 with built-in Kotlin, Android compile platform API 36.1, `minSdk/targetSdk` 36, Compose BOM 2025.06.01, Material 3, coroutines 1.10.2, lifecycle 2.9.1, Room 2.7.2, OkHttp 4.12.0, kotlinx-serialization 1.8.1, ML Kit Digital Ink Recognition 18.1.0, JUnit 4.13.2, Turbine 1.2.1, Robolectric 4.14.1.
 
 ## Global Constraints
 
-- Android 16 only: `compileSdk = 36`, `targetSdk = 36`, `minSdk = 36`.
+- Android 16 runtime only: `targetSdk = 36`, `minSdk = 36`; compile against API 36.1 with the AGP minor-API DSL.
 - Preserve the Rust implementation and root Cargo files unchanged.
 - Use `dev.riddle.magicpaper` as the initial namespace/application ID and `Riddle` as the display name.
 - No production behavior without a failing test first; configuration/generated wrapper files are the only scaffolding exception.
@@ -62,7 +62,7 @@ android-app/
 
 - [ ] **Step 1: Install or locate the required toolchain**
 
-Install Android Studio with Android SDK Platform 36, Build Tools 36.x, platform-tools, emulator, and a JDK supported by AGP 8.10.1. Set `ANDROID_HOME` and `JAVA_HOME` in the local shell; do not commit machine paths.
+Install Android Studio 2026.1.1 with API 36.1, Build Tools 36.1.0, platform-tools, Command-line Tools 21.0, emulator, and the bundled JBR 21. Set `ANDROID_HOME` and `JAVA_HOME`; do not commit machine paths.
 
 Run:
 
@@ -72,7 +72,7 @@ adb version
 sdkmanager --list_installed
 ```
 
-Expected: Java is available and `platforms;android-36` is listed. If this gate fails, stop implementation and report the missing toolchain.
+Expected: Java is available, `platforms;android-36.1` is listed, and `Riddle_API_36_1` appears in `emulator -list-avds`. If this gate fails, stop implementation and report the missing toolchain.
 
 - [ ] **Step 2: Create Gradle configuration and wrapper**
 
@@ -81,11 +81,11 @@ Use the pinned versions in the header. Register modules `:app`, `:core-model`, `
 Run from `android-app/`:
 
 ```powershell
-gradle wrapper --gradle-version 8.11.1
+gradle wrapper --gradle-version 9.4.1
 ./gradlew --version
 ```
 
-Expected: wrapper reports Gradle 8.11.1.
+Expected: wrapper reports Gradle 9.4.1. Android modules configure API 36.1 with `compileSdk { version = release(36) { minorApiLevel = 1 } }`, while `minSdk` and `targetSdk` remain 36.
 
 - [ ] **Step 3: Write the failing domain-contract test**
 
@@ -158,7 +158,7 @@ Document SDK 36 installation, emulator requirements, wrapper commands, and that 
 
 ```powershell
 git add android-app
-git commit -m "build(android): scaffold API 36 project and domain contracts"
+git commit -m "build(android): scaffold API 36.1 project and domain contracts"
 ```
 
 ## Task 2: Normalized transforms and configurable settings gesture
@@ -631,7 +631,7 @@ Expected: exit code 0, zero failed tests, zero lint errors, debug APK created.
 
 - [ ] **Step 3: Run Android 16 device matrix**
 
-Run `connectedCheck` on API 36 emulator profiles representing a compact phone, tall phone, landscape/wide foldable, and tablet. On stylus-capable hardware, manually verify pressure, eraser, and palm rejection.
+Run `connectedCheck` on API 36.1 emulator profiles representing a compact phone, tall phone, landscape/wide foldable, and tablet. On stylus-capable hardware, manually verify pressure, eraser, and palm rejection.
 
 ```powershell
 ./gradlew connectedCheck

@@ -6,7 +6,7 @@ This repository currently contains the Rust implementation of Riddle for the reM
 
 The next product is an Android application that:
 
-- runs on Android 16 / API 36;
+- runs on Android 16 / API 36 and compiles against the installed API 36.1 platform;
 - provides the Riddle conversational and agent experience on Android;
 - supports multiple remote model providers, including OpenAI/ChatGPT-compatible and DeepSeek-compatible services;
 - can add providers without changing UI, conversation, or agent orchestration code;
@@ -153,7 +153,8 @@ Create the Android product in `android-app/` with:
 
 - Kotlin as the primary language;
 - Gradle Kotlin DSL;
-- `compileSdk = 36` and `targetSdk = 36` for Android 16;
+- Android 16 runtime compatibility with `minSdk = 36` and `targetSdk = 36`;
+- API 36.1 compilation using the Android Gradle Plugin minor-API DSL;
 - a documented `minSdk` selected from product requirements, not guessed in feature code;
 - Jetpack Compose and Material 3 for new UI;
 - Kotlin coroutines and `Flow` for asynchronous and streaming state;

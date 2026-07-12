@@ -2,7 +2,7 @@
 
 - Status: `approved`
 - Product: Riddle Android
-- Target platform: Android 16 / API 36 only
+- Target platform: Android 16 / API 36 only; compile platform API 36.1
 - Design approval: 2026-07-12
 - Reference implementation: Rust application under `src/`
 - Reference design: `doc/detailed-design.md`
@@ -163,7 +163,7 @@ Additional states cover help, history reconstruction, settings, failure, cancell
 
 ## 6. Non-functional requirements
 
-- `NFR-001`: Use Kotlin, Gradle Kotlin DSL, `compileSdk = 36`, `targetSdk = 36`, and `minSdk = 36`.
+- `NFR-001`: Use Kotlin, Gradle Kotlin DSL, Android Gradle Plugin 9.2.1, Gradle 9.4.1, API 36.1 compilation, `targetSdk = 36`, and `minSdk = 36`.
 - `NFR-002`: Compose/Material 3 shall implement app UI; custom Android `View/Canvas` shall implement high-frequency paper input and animation.
 - `NFR-003`: Input and animated points shall not cause full Compose recomposition per point.
 - `NFR-004`: Database, network, OCR, and credential work shall not block the main thread.
@@ -342,7 +342,7 @@ Each slice keeps the fake Provider experience runnable. Rollback disables/remove
 - Vision models receive images; text-only models use local recognition.
 - Tool-agent capabilities are deferred.
 - Settings defaults to three-finger long press for 2 seconds behind a replaceable policy.
-- Android 16/API 36 is the only supported platform.
+- Android 16/API 36 is the only supported runtime; the project compiles against API 36.1.
 - Finger and pressure stylus input are supported.
 - Rotation is supported with optional portrait lock.
 - OpenAI/DeepSeek presets and custom HTTPS OpenAI-compatible profiles are supported.
