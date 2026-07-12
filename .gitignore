@@ -1,5 +1,7 @@
 /target/
 /dist/
+/.worktrees/
+.superpowers/
 *.log
 
 # Never commit a real API key.
