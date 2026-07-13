@@ -40,3 +40,9 @@ emulator -avd Riddle_API_36_1
 ```
 
 Normal tests use deterministic fakes and require no live provider credentials or paid model calls.
+
+The device flow uses `ActivityScenario.recreate()` plus rotation to verify ViewModel ownership,
+normalized geometry, and repository-backed recovery boundaries. Android instrumentation cannot
+deterministically simulate an operating-system process kill while retaining the test connection;
+the interrupted-stream marker is therefore covered by deterministic ViewModel/persistence tests,
+with an actual OS-kill recovery check remaining a manual release smoke test.

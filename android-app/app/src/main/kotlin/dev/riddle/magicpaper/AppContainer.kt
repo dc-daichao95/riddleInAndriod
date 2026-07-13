@@ -2,26 +2,32 @@ package dev.riddle.magicpaper
 
 import android.content.Context
 import androidx.room.Room
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.createSavedStateHandle
 import dev.riddle.magicpaper.conversation.ConversationOrchestrator
 import dev.riddle.magicpaper.conversation.ConversationStateMachine
 import dev.riddle.magicpaper.conversation.FakeModelProvider
+import dev.riddle.magicpaper.conversation.MlKitHandwritingRecognizer
+import dev.riddle.magicpaper.conversation.TurnInputRouter
 import dev.riddle.magicpaper.memory.DraftPage
 import dev.riddle.magicpaper.memory.RiddleDatabase
 import dev.riddle.magicpaper.memory.RoomMemoryRepository
 import dev.riddle.magicpaper.model.FinishReason
 import dev.riddle.magicpaper.model.ModelCapabilities
-import dev.riddle.magicpaper.model.ModelDescriptor
 import dev.riddle.magicpaper.model.ModelEvent
 import dev.riddle.magicpaper.model.ModelProvider
-import dev.riddle.magicpaper.model.ModelRequest
 import dev.riddle.magicpaper.model.ProviderConfiguration
-import dev.riddle.magicpaper.model.ProviderDescriptor
 import dev.riddle.magicpaper.model.ProviderType
-import dev.riddle.magicpaper.model.ValidationResult
 import dev.riddle.magicpaper.paperui.PaperPersistence
 import dev.riddle.magicpaper.paperui.PaperPreferences
 import dev.riddle.magicpaper.paperui.PaperRecovery
 import dev.riddle.magicpaper.paperui.PaperViewModel
+import dev.riddle.magicpaper.paperui.ModelSelection
+import dev.riddle.magicpaper.paperui.SelectedModel
+import dev.riddle.magicpaper.paper.PageRasterizer
 import dev.riddle.magicpaper.provider.DeepSeekProvider
 import dev.riddle.magicpaper.provider.OkHttpModelTransport
 import dev.riddle.magicpaper.provider.OpenAiCompatibleProvider
@@ -32,8 +38,9 @@ import dev.riddle.magicpaper.settings.ProviderProfileRepository
 import dev.riddle.magicpaper.settings.ProviderSettingsViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONObject
@@ -64,28 +71,71 @@ class AppContainer(context: Context) {
             ProviderType.DEEPSEEK_COMPATIBLE -> DeepSeekProvider(configuration, transport)
         }
     }
-    private val fakeProvider = FakeModelProvider(listOf(
-        ModelEvent.TextDelta("The paper remembers."),
-        ModelEvent.Completed(FinishReason.STOP),
-    ))
-    val modelProvider: ModelProvider = SelectedModelProvider(profileRepository, providerFactory, fakeProvider)
-    val stateMachine = ConversationStateMachine()
-    val conversationOrchestrator = ConversationOrchestrator(modelProvider)
-    val paperPreferences: PaperPreferences = SharedPaperPreferences(appContext)
-    val paperPersistence: PaperPersistence = RoomPaperPersistence(memoryRepository, appContext)
-    val paperViewModel = PaperViewModel(
-        modelProvider,
-        paperPersistence,
-        paperPreferences,
-        dispatchers.default,
-        selectedModelId = profileRepository::selectedModelId,
+    private val fakeProvider: ModelProvider = FakeModelProvider(flow {
+        delay(500)
+        emit(ModelEvent.TextDelta("The paper remembers."))
+        delay(500)
+        emit(ModelEvent.Completed(FinishReason.STOP))
+    })
+    private val modelSelection = ModelSelection {
+        profileRepository.selectedConfiguration()?.let { configuration ->
+            SelectedModel(
+                providerFactory.create(configuration),
+                checkNotNull(configuration.defaultModelId),
+                configuration.capabilities,
+            )
+        } ?: SelectedModel(
+            fakeProvider,
+            "fake",
+            ModelCapabilities(streaming = true, vision = true),
+        )
+    }
+    private val stateMachine = ConversationStateMachine()
+    private val pageRasterizer = PageRasterizer(
+        appContext.cacheDir,
+        appContext.resources.displayMetrics.widthPixels.coerceAtLeast(1),
+        appContext.resources.displayMetrics.heightPixels.coerceAtLeast(1),
+        dispatcher = dispatchers.default,
     )
-    val providerSettingsViewModel = ProviderSettingsViewModel(profileRepository, credentialStore, providerFactory)
+    private val turnInputRouter = TurnInputRouter(
+        pageRasterizer,
+        MlKitHandwritingRecognizer(dispatcher = dispatchers.default),
+    )
+    val paperPreferences: PaperPreferences = SharedPaperPreferences(appContext)
+    private val paperPersistence: PaperPersistence = RoomPaperPersistence(memoryRepository, appContext, clock)
+
+    val paperViewModelFactory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
+            require(modelClass.isAssignableFrom(PaperViewModel::class.java))
+            @Suppress("UNCHECKED_CAST")
+            return createPaperViewModel(extras.createSavedStateHandle()) as T
+        }
+    }
+    val providerSettingsViewModelFactory: ViewModelProvider.Factory = object : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
+            require(modelClass.isAssignableFrom(ProviderSettingsViewModel::class.java))
+            @Suppress("UNCHECKED_CAST")
+            return ProviderSettingsViewModel(profileRepository, credentialStore, providerFactory) as T
+        }
+    }
+
+    private fun createPaperViewModel(savedStateHandle: SavedStateHandle) = PaperViewModel(
+        modelSelection = modelSelection,
+        persistence = paperPersistence,
+        preferences = paperPreferences,
+        turnInputRouter = turnInputRouter,
+        stateMachine = stateMachine,
+        orchestratorFactory = ::ConversationOrchestrator,
+        savedStateHandle = savedStateHandle,
+        workerDispatcher = dispatchers.default,
+        nowMillis = clock::nowMillis,
+    )
 }
 
 private class RoomPaperPersistence(
     private val memory: RoomMemoryRepository,
     context: Context,
+    private val clock: AppClock,
 ) : PaperPersistence {
     private val preferences = context.getSharedPreferences("paper-session-v1", Context.MODE_PRIVATE)
     override suspend fun load(): PaperRecovery {
@@ -93,10 +143,11 @@ private class RoomPaperPersistence(
         return PaperRecovery(draft?.strokes.orEmpty(), preferences.getBoolean("streaming", false))
     }
     override suspend fun saveDraft(recovery: PaperRecovery) {
-        memory.replaceDraft(DraftPage(System.currentTimeMillis(), recovery.strokes))
+        memory.replaceDraft(DraftPage(clock.nowMillis(), recovery.strokes))
+        preferences.edit().putBoolean("streaming", recovery.interrupted).commit()
     }
     override suspend fun markStreaming(strokes: List<dev.riddle.magicpaper.model.PaperStroke>) {
-        memory.replaceDraft(DraftPage(System.currentTimeMillis(), strokes))
+        memory.replaceDraft(DraftPage(clock.nowMillis(), strokes))
         preferences.edit().putBoolean("streaming", true).commit()
     }
     override suspend fun clearStreamingAndDraft() {
@@ -111,18 +162,6 @@ private class SharedPaperPreferences(context: Context) : PaperPreferences {
     override suspend fun setPortraitLocked(locked: Boolean) {
         if (preferences.edit().putBoolean("portrait_locked", locked).commit()) portraitLocked.value = locked
     }
-}
-
-private class SelectedModelProvider(
-    private val profiles: SharedPreferencesProfileRepository,
-    private val factory: ProviderFactory,
-    private val fake: ModelProvider,
-) : ModelProvider {
-    private fun selected(): ModelProvider = profiles.selectedConfiguration()?.let(factory::create) ?: fake
-    override val descriptor: ProviderDescriptor get() = selected().descriptor
-    override fun stream(request: ModelRequest): Flow<ModelEvent> = selected().stream(request)
-    override suspend fun listModels(): Result<List<ModelDescriptor>> = selected().listModels()
-    override suspend fun validate(configuration: ProviderConfiguration): ValidationResult = factory.create(configuration).validate(configuration)
 }
 
 class SharedPreferencesProfileRepository(context: Context) : ProviderProfileRepository {
@@ -143,8 +182,6 @@ class SharedPreferencesProfileRepository(context: Context) : ProviderProfileRepo
         val selected = preferences.getString("selected", null) ?: return null
         return readProfiles().firstOrNull { it.id == selected && it.enabled }
     }
-    fun selectedModelId(): String = selectedConfiguration()?.defaultModelId ?: "fake"
-
     private fun readProfiles(): List<ProviderConfiguration> = runCatching {
         val array = JSONArray(preferences.getString("profiles", "[]"))
         (0 until array.length()).map { decode(array.getJSONObject(it)) }

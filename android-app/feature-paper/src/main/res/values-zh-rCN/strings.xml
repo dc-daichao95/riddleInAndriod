@@ -1,8 +1,12 @@
 <resources>
     <string name="paper_ready">纸张已就绪</string>
     <string name="paper_dissolving">墨迹正在消散</string>
+    <string name="paper_preparing">墨迹正在消散，正在准备请求</string>
     <string name="paper_thinking">正在思考</string>
-    <string name="paper_reply_appearing">回复正在出现</string>
+    <string name="paper_reply_appearing">回复正在显现</string>
+    <string name="paper_completed">回复完成</string>
+    <string name="paper_cancelled">回复已取消</string>
+    <string name="paper_surface_label">魔法纸书写区域</string>
     <string name="paper_interrupted">上一次回复已中断</string>
     <string name="paper_failed">回复失败</string>
     <string name="paper_cancel">取消</string>

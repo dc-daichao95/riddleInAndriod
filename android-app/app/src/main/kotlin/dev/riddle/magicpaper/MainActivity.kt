@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -23,7 +24,10 @@ import dev.riddle.magicpaper.settings.ProviderSettingsRoute
 
 class MainActivity : ComponentActivity() {
     private val container get() = (application as RiddleApplication).container
-    val paperViewModel: PaperViewModel get() = container.paperViewModel
+    val paperViewModel: PaperViewModel by viewModels { container.paperViewModelFactory }
+    private val providerSettingsViewModel: dev.riddle.magicpaper.settings.ProviderSettingsViewModel by viewModels {
+        container.providerSettingsViewModelFactory
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +56,7 @@ class MainActivity : ComponentActivity() {
                             settingsVisible = false
                             paperViewModel.onIntent(PaperUiIntent.SettingsClosed)
                         },
-                        providerSettings = { ProviderSettingsRoute(container.providerSettingsViewModel) },
+                        providerSettings = { ProviderSettingsRoute(providerSettingsViewModel) },
                     )
                 } else {
                     MagicPaperRoute(paperViewModel, onOpenSettings = { settingsVisible = true })

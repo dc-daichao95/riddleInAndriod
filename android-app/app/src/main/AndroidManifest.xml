@@ -9,7 +9,6 @@
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
-            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|uiMode"
             android:exported="true"
             android:label="@string/magic_paper_label">
             <intent-filter>

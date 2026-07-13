@@ -56,6 +56,7 @@ enum class MessageRole {
 data class Message(
     val role: MessageRole,
     val text: String,
+    val imageDataUrl: String? = null,
 )
 
 sealed interface ResponseFormat {

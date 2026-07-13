@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -46,21 +47,23 @@ fun MagicPaperScreen(
     modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier.fillMaxSize().background(Color(0xFFF4F0E5)).semantics {
-            liveRegion = LiveRegionMode.Polite
-        },
+        modifier.fillMaxSize().background(Color(0xFFF4F0E5)),
     ) {
+        val paperLabel = stringResource(R.string.paper_surface_label)
         AndroidView(
             factory = { context -> MagicPaperView(context).apply { this.onPaperIntent = onPaperIntent } },
             update = { view ->
                 view.onPaperIntent = onPaperIntent
                 view.submitRenderModel(state.renderModel)
             },
-            modifier = Modifier.fillMaxSize().testTag("magic_paper"),
+            modifier = Modifier.fillMaxSize().testTag("magic_paper").semantics {
+                contentDescription = paperLabel
+            },
         )
         Text(
             text = phaseSummary(state.phase),
-            modifier = Modifier.align(Alignment.TopCenter).padding(8.dp).testTag("paper_status"),
+            modifier = Modifier.align(Alignment.TopCenter).padding(8.dp).testTag("paper_status")
+                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
             color = Color.Transparent,
         )
         if (state.reply.isNotEmpty()) {
@@ -71,7 +74,7 @@ fun MagicPaperScreen(
                 color = Color(0xFF24211B),
             )
         }
-        if (state.phase in setOf(PaperPhase.Dissolving, PaperPhase.Thinking, PaperPhase.Replying) && state.reply.isEmpty()) {
+        if (state.canCancel) {
             Button(
                 onClick = { onIntent(PaperUiIntent.Cancel) },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(24.dp),
@@ -94,9 +97,11 @@ fun MagicPaperScreen(
 @Composable
 private fun phaseSummary(phase: PaperPhase) = stringResource(when (phase) {
     PaperPhase.Listening -> R.string.paper_ready
-    PaperPhase.Dissolving -> R.string.paper_dissolving
+    PaperPhase.Preparing -> R.string.paper_preparing
     PaperPhase.Thinking -> R.string.paper_thinking
-    PaperPhase.Replying -> R.string.paper_reply_appearing
+    PaperPhase.Streaming -> R.string.paper_reply_appearing
+    PaperPhase.Completed -> R.string.paper_completed
+    PaperPhase.Cancelled -> R.string.paper_cancelled
     PaperPhase.Interrupted -> R.string.paper_interrupted
     PaperPhase.Failed -> R.string.paper_failed
 })

@@ -39,7 +39,9 @@ class MagicPaperView @JvmOverloads constructor(
 
     /** Replaces the render snapshot; stroke ownership and mutation remain with the caller. */
     fun submitRenderModel(model: PaperRenderModel) {
-        renderModel = model.copy(strokes = model.strokes.toList())
+        val snapshot = model.copy(strokes = model.strokes.toList())
+        if (snapshot == renderModel) return
+        renderModel = snapshot
         rebuildRenderCache()
         previewDots.clear()
         previewSegments.clear()

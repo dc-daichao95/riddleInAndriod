@@ -1,7 +1,12 @@
 package dev.riddle.magicpaper.paperui
 
 import app.cash.turbine.test
+import androidx.lifecycle.SavedStateHandle
+import dev.riddle.magicpaper.conversation.ConversationOrchestrator
+import dev.riddle.magicpaper.conversation.ConversationStateMachine
 import dev.riddle.magicpaper.conversation.FakeModelProvider
+import dev.riddle.magicpaper.conversation.HandwritingRecognizer
+import dev.riddle.magicpaper.conversation.TurnInputRouter
 import dev.riddle.magicpaper.model.FinishReason
 import dev.riddle.magicpaper.model.ModelEvent
 import dev.riddle.magicpaper.model.ModelCapabilities
@@ -16,6 +21,9 @@ import dev.riddle.magicpaper.model.NormalizedPoint
 import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import dev.riddle.magicpaper.paper.PaperIntent
+import dev.riddle.magicpaper.paper.PageRasterizer
+import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,13 +89,13 @@ class PaperViewModelTest {
         advanceUntilIdle()
         assertEquals(1, provider.recordedRequests.size)
         assertEquals("Magic reply", viewModel.state.value.reply)
-        assertEquals(PaperPhase.Replying, viewModel.state.value.phase)
+        assertEquals(PaperPhase.Completed, viewModel.state.value.phase)
         assertTrue(viewModel.state.value.renderModel.strokes.isEmpty())
     }
 
     @Test fun `commit streams configured model without model discovery request`() = runTest(dispatcher) {
         val provider = CountingProvider()
-        val viewModel = PaperViewModel(provider, FakePaperPersistence(), FakePaperPreferences(), dispatcher) { "configured-model" }
+        val viewModel = viewModel(FakePaperPersistence(), provider = provider, modelId = "configured-model")
         drawStroke(viewModel)
         advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
         advanceUntilIdle()
@@ -100,14 +108,35 @@ class PaperViewModelTest {
             emit(ModelEvent.TextDelta("partial"))
             kotlinx.coroutines.awaitCancellation()
         })
-        val viewModel = viewModel(FakePaperPersistence(), provider)
+        val persistence = FakePaperPersistence()
+        val viewModel = viewModel(persistence, provider)
         drawStroke(viewModel)
         advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
         dispatcher.scheduler.runCurrent()
+        assertTrue(viewModel.state.value.canCancel)
         viewModel.onIntent(PaperUiIntent.Cancel)
         advanceUntilIdle()
-        assertEquals(PaperPhase.Listening, viewModel.state.value.phase)
+        assertEquals(PaperPhase.Cancelled, viewModel.state.value.phase)
         assertEquals("partial", viewModel.state.value.reply)
+        assertFalse(persistence.savedDrafts.last().interrupted)
+    }
+
+    @Test fun `new stroke interrupts stream and rejects late reply deltas`() = runTest(dispatcher) {
+        val lateEvents = kotlinx.coroutines.flow.MutableSharedFlow<ModelEvent>(extraBufferCapacity = 2)
+        val persistence = FakePaperPersistence()
+        val viewModel = viewModel(persistence, FakeModelProvider(lateEvents))
+        drawStroke(viewModel)
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        dispatcher.scheduler.runCurrent()
+        lateEvents.tryEmit(ModelEvent.TextDelta("old"))
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onPaperIntent(PaperIntent.StrokeStarted("new", PaperTool.PEN, NormalizedPoint(.2f, .2f, .01f)))
+        lateEvents.tryEmit(ModelEvent.TextDelta(" late"))
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals("", viewModel.state.value.reply)
+        assertFalse(persistence.savedDrafts.last().interrupted)
     }
 
     @Test fun `portrait preference is observed and updated`() = runTest(dispatcher) {
@@ -144,9 +173,24 @@ class PaperViewModelTest {
 
     private fun viewModel(
         persistence: FakePaperPersistence,
-        provider: FakeModelProvider = FakeModelProvider(listOf(ModelEvent.Completed(FinishReason.STOP))),
+        provider: ModelProvider = FakeModelProvider(listOf(ModelEvent.Completed(FinishReason.STOP))),
         preferences: FakePaperPreferences = FakePaperPreferences(),
-    ) = PaperViewModel(provider, persistence, preferences, dispatcher)
+        modelId: String = "fake",
+    ) = PaperViewModel(
+        modelSelection = ModelSelection { SelectedModel(provider, modelId, provider.descriptor.capabilities) },
+        persistence = persistence,
+        preferences = preferences,
+        turnInputRouter = TurnInputRouter(
+            PageRasterizer(File("build/tmp/view-model"), 1000, 1000, dispatcher = dispatcher),
+            object : HandwritingRecognizer {
+                override suspend fun recognize(strokes: List<PaperStroke>, locale: Locale) = Result.success("recognized page")
+            },
+        ),
+        stateMachine = ConversationStateMachine(),
+        orchestratorFactory = ::ConversationOrchestrator,
+        savedStateHandle = SavedStateHandle(),
+        workerDispatcher = dispatcher,
+    )
 
     private fun drawStroke(viewModel: PaperViewModel) {
         val first = NormalizedPoint(.1f, .2f, .01f)

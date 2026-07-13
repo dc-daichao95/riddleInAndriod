@@ -11,7 +11,13 @@ object ProviderJson {
     }
     fun request(request: ModelRequest): String = JSONObject().apply {
         put("model", request.modelId); put("stream", true); put("stream_options", JSONObject().put("include_usage", true))
-        put("messages", JSONArray(request.messages.map { JSONObject().put("role", it.role.name.lowercase()).put("content", it.text) }))
+        put("messages", JSONArray(request.messages.map { message ->
+            JSONObject().put("role", message.role.name.lowercase()).put("content", message.imageDataUrl?.let { image ->
+                JSONArray()
+                    .put(JSONObject().put("type", "text").put("text", message.text))
+                    .put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", image)))
+            } ?: message.text)
+        }))
         request.temperature?.let { put("temperature", it) }
         request.maxOutputTokens?.let { put("max_tokens", it) }
         if (request.tools.isNotEmpty()) put("tools", JSONArray(request.tools.map { tool ->

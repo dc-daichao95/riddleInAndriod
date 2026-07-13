@@ -2,6 +2,7 @@ package dev.riddle.magicpaper.conversation
 
 import dev.riddle.magicpaper.model.FinishReason
 import dev.riddle.magicpaper.model.ModelRequest
+import dev.riddle.magicpaper.model.ModelError
 
 sealed interface ConversationEffect {
     data class BeginTurn(val pageId: String) : ConversationEffect
@@ -11,6 +12,7 @@ sealed interface ConversationEffect {
     data class RenderHandwriting(val text: String, val append: Boolean) : ConversationEffect
     data class PersistCompletedTurn(val pageId: String, val reply: String) : ConversationEffect
     data class StreamCompleted(val reason: FinishReason) : ConversationEffect
+    data class ProviderFailed(val error: ModelError) : ConversationEffect
     data object CancelActiveTurn : ConversationEffect
     data object ClearReply : ConversationEffect
 }

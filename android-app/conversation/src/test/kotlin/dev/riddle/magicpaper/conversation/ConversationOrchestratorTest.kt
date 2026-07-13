@@ -6,6 +6,7 @@ import dev.riddle.magicpaper.model.Message
 import dev.riddle.magicpaper.model.MessageRole
 import dev.riddle.magicpaper.model.ModelEvent
 import dev.riddle.magicpaper.model.ModelRequest
+import dev.riddle.magicpaper.model.ModelError
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.flow
@@ -49,6 +50,14 @@ class ConversationOrchestratorTest {
                 assertEquals(ConversationEffect.RenderHandwriting("answer", append = false), awaitItem())
                 awaitComplete()
             }
+        }
+    }
+
+    @Test fun `typed provider failure is preserved as an orchestration effect`() = runTest {
+        val error = ModelError.Authentication("invalid")
+        ConversationOrchestrator(FakeModelProvider(listOf(ModelEvent.Failed(error)))).collect(request).test {
+            assertEquals(ConversationEffect.ProviderFailed(error), awaitItem())
+            awaitComplete()
         }
     }
 }

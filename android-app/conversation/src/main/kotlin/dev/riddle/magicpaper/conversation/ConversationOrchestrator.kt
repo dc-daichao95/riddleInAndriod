@@ -16,6 +16,7 @@ class ConversationOrchestrator(private val provider: ModelProvider) {
                     wroteText = true
                 }
                 is ModelEvent.Completed -> emit(ConversationEffect.StreamCompleted(event.reason))
+                is ModelEvent.Failed -> emit(ConversationEffect.ProviderFailed(event.error))
                 else -> Unit
             }
         }

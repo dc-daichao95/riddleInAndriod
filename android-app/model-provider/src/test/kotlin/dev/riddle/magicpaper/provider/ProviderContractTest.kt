@@ -17,6 +17,17 @@ class ProviderContractTest {
     private val config = ProviderConfiguration("p", ProviderType.OPENAI_COMPATIBLE, "Provider", "https://example.test/v1", "alias", "chat", true, ModelCapabilities(streaming = true, toolCalling = true))
     private val request = ModelRequest("chat", listOf(Message(MessageRole.USER, "secret prompt")))
 
+    @Test fun `vision message is encoded as OpenAI compatible text and image content`() {
+        val json = ProviderJson.request(ModelRequest(
+            "vision",
+            listOf(Message(MessageRole.USER, "Read this page", imageDataUrl = "data:image/png;base64,AA==")),
+        ))
+        val content = org.json.JSONObject(json).getJSONArray("messages").getJSONObject(0).getJSONArray("content")
+        assertEquals("text", content.getJSONObject(0).getString("type"))
+        assertEquals("image_url", content.getJSONObject(1).getString("type"))
+        assertEquals("data:image/png;base64,AA==", content.getJSONObject(1).getJSONObject("image_url").getString("url"))
+    }
+
     private fun providers(transport: ModelTransport) = listOf<ModelProvider>(
         OpenAiCompatibleProvider(config, transport),
         DeepSeekProvider(config.copy(type = ProviderType.DEEPSEEK_COMPATIBLE), transport),

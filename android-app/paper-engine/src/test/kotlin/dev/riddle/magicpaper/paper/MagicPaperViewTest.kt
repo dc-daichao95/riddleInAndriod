@@ -4,6 +4,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import kotlin.test.Test
 import kotlin.test.assertTrue
+import kotlin.test.assertSame
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -32,6 +33,23 @@ class MagicPaperViewTest {
 
         assertTrue(intents.isEmpty())
     }
+
+    @Test
+    fun `submitting an unchanged render model reuses the bitmap cache`() {
+        val view = view()
+        val model = PaperRenderModel()
+        view.submitRenderModel(model)
+        val before = renderCache(view)
+
+        view.submitRenderModel(model.copy())
+
+        assertSame(before, renderCache(view))
+    }
+
+    private fun renderCache(view: MagicPaperView): Any? = MagicPaperView::class.java
+        .getDeclaredField("renderCache")
+        .apply { isAccessible = true }
+        .get(view)
 
     private fun view() = MagicPaperView(RuntimeEnvironment.getApplication()).apply {
         layout(0, 0, 1000, 1000)
