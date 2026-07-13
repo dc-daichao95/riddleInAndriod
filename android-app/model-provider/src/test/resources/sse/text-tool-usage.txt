@@ -1,0 +1,7 @@
+data: {"choices":[{"delta":{"content":"Hi","tool_calls":[{"index":0,"id":"call","function":{"name":"danger","arguments":"{}"}}]},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+data: [DONE]
+
+: eof
