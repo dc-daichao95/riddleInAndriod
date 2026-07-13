@@ -44,7 +44,7 @@ class SseParser {
         }
         if (value.startsWith(":")) return
         if (value.startsWith("id:")) id = value.substring(3).removePrefix(" ")
-        else if (value.startsWith("retry:")) retryMillis = value.substring(6).trim().toLongOrNull()?.takeIf { it >= 0 }
+        else if (value.startsWith("retry:")) value.substring(6).trim().toLongOrNull()?.takeIf { it >= 0 }?.let { retryMillis = it }
         else if (value == "data") data += ""
         else if (value.startsWith("data:")) data += value.substring(5).removePrefix(" ")
     }

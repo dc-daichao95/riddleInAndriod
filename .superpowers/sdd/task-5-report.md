@@ -57,3 +57,21 @@ Fresh clean review gate:
 ```
 
 Result: `BUILD SUCCESSFUL` (76 tasks; 37 executed, 39 up-to-date).
+
+## Final review wave
+
+Focused RED/GREEN regressions additionally established that:
+
+- validation requires an actual terminal completion; empty, truncated, nonterminal, and provider-error responses are typed invalid results;
+- invalid SSE `retry` fields are ignored without clearing the last valid reconnection delay;
+- provider adapters receive an injected `RetryPolicy`, with deterministic adapter-level RFC HTTP-date testing;
+- fragmented function names accumulate into one stable `ToolCallStarted`, while argument fragments and completion remain ordered and intact;
+- general transport requests reject case-insensitive credential-bearing headers, preventing caller overrides of transport-owned authorization.
+
+The final clean command remained:
+
+```powershell
+./gradlew :model-provider:clean :model-provider:test :model-provider:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL` (76 tasks; 37 executed, 39 up-to-date).

@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.flow
 open class OpenAiCompatibleProvider(
     protected val configuration: ProviderConfiguration,
     private val transport: ModelTransport,
+    private val retryPolicy: RetryPolicy = RetryPolicy(),
 ) : ModelProvider {
     override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
 
@@ -68,7 +69,7 @@ open class OpenAiCompatibleProvider(
         else -> ModelError.InvalidRequest(providerError(response.errorBody))
     }
 
-    private fun retryAfterMillis(headers: Map<String, String>): Long? = RetryPolicy().retryAfterMillis(headers.entries
+    private fun retryAfterMillis(headers: Map<String, String>): Long? = retryPolicy.retryAfterMillis(headers.entries
         .firstOrNull { it.key.equals("Retry-After", true) }?.value)
 
     private fun providerError(body: String?): String? = runCatching { org.json.JSONObject(body.orEmpty()).optJSONObject("error")?.optString("message") }
@@ -95,8 +96,14 @@ open class OpenAiCompatibleProvider(
         val minimal = ModelRequest(configuration.defaultModelId ?: return ValidationResult.Invalid(ModelError.InvalidRequest()), listOf(Message(MessageRole.USER, "ping")), maxOutputTokens = 1)
         return streamWith(configuration, minimal).let { events ->
             var failure: ModelError? = null
-            events.collect { if (it is ModelEvent.Failed) failure = it.error }
-            failure?.let { ValidationResult.Invalid(it) } ?: ValidationResult.Valid
+            var completed = false
+            events.collect {
+                if (it is ModelEvent.Failed) failure = it.error
+                if (it is ModelEvent.Completed) completed = true
+            }
+            failure?.let { ValidationResult.Invalid(it) }
+                ?: if (completed) ValidationResult.Valid
+                else ValidationResult.Invalid(ModelError.Parsing("Validation response did not complete"))
         }
     }
 }

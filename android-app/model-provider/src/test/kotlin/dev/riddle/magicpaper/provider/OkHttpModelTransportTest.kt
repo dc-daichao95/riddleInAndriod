@@ -11,8 +11,16 @@ import okhttp3.mockwebserver.MockWebServer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 
 class OkHttpModelTransportTest {
+    @Test fun `general request rejects credential bearing caller headers`() {
+        listOf("Authorization", "authorization", "Proxy-Authorization", "Cookie").forEach { reserved ->
+            assertFailsWith<IllegalArgumentException> {
+                TransportRequest("https://example.test", mapOf(reserved to "attacker"), "{}", "alias")
+            }
+        }
+    }
     @Test fun `credential is resolved only at concrete request boundary`() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("data: [DONE]\n\n").setHeader("Content-Type", "text/event-stream"))

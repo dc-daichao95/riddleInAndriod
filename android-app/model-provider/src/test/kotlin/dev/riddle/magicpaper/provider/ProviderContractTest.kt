@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.time.Instant
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -53,6 +54,13 @@ class ProviderContractTest {
         providers(FakeTransport(TransportResponse.HttpFailure(400, errorBody = "not-json"))).forEach {
             assertEquals(listOf(ModelEvent.Failed(ModelError.InvalidRequest())), it.stream(request).toList())
         }
+    }
+
+    @Test fun `adapter maps HTTP date retry after using injected clock`() = runBlocking {
+        val now = Instant.parse("2026-07-13T00:00:00Z")
+        val transport = FakeTransport(TransportResponse.HttpFailure(429, mapOf("Retry-After" to "Mon, 13 Jul 2026 00:00:05 GMT")))
+        val provider = OpenAiCompatibleProvider(config, transport, RetryPolicy { now })
+        assertEquals(listOf(ModelEvent.Failed(ModelError.RateLimited(5000))), provider.stream(request).toList())
     }
 
     @Test fun `malformed JSON and truncated stream are typed parse failures`() = runBlocking {
@@ -112,10 +120,32 @@ class ProviderContractTest {
         assertEquals(TransportMethod.POST, transport.requests.last().method)
     }
 
+    @Test fun `validation requires a terminal provider response`() = runBlocking {
+        val responses = listOf(
+            TransportResponse.Success(flow { }),
+            TransportResponse.Success(flow { emit("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n".encodeToByteArray()) }),
+            TransportResponse.Success(flow { emit("data: [DONE]\n\n".encodeToByteArray()) }),
+            TransportResponse.HttpFailure(401, errorBody = "{\"error\":{\"message\":\"bad key\"}}"),
+        )
+        val transport = RecordingTransport(responses)
+        val provider = OpenAiCompatibleProvider(config, transport)
+        assertTrue(provider.validate(config) is ValidationResult.Invalid)
+        assertTrue(provider.validate(config) is ValidationResult.Invalid)
+        assertEquals(ValidationResult.Valid, provider.validate(config))
+        assertEquals(ValidationResult.Invalid(ModelError.Authentication("bad key")), provider.validate(config))
+    }
+
     @Test fun `tool argument fragments retain call identity and complete without execution`() = runBlocking {
         val bytes = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"q\\\":\"}}]}}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n".encodeToByteArray()
         providers(FakeTransport(TransportResponse.Success(flow { emit(bytes) }))).forEach {
             assertEquals(listOf(ModelEvent.ToolCallStarted("c1", "lookup"), ModelEvent.ToolCallArgumentsDelta("c1", "{\"q\":"), ModelEvent.ToolCallArgumentsDelta("c1", "1}"), ModelEvent.ToolCallCompleted(ToolCall("c1", "lookup", "{\"q\":1}")), ModelEvent.Completed(FinishReason.STOP)), it.stream(request).toList())
+        }
+    }
+
+    @Test fun `fragmented function name emits one stable start without losing arguments`() = runBlocking {
+        val bytes = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"look\"}}]}}]}\n\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"up\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n".encodeToByteArray()
+        providers(FakeTransport(TransportResponse.Success(flow { emit(bytes) }))).forEach {
+            assertEquals(listOf(ModelEvent.ToolCallStarted("c1", "lookup"), ModelEvent.ToolCallArgumentsDelta("c1", "{}"), ModelEvent.ToolCallCompleted(ToolCall("c1", "lookup", "{}")), ModelEvent.Completed(FinishReason.STOP)), it.stream(request).toList())
         }
     }
 

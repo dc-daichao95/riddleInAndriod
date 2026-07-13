@@ -24,6 +24,10 @@ data class TransportRequest(
     val credentialAlias: String,
     val method: TransportMethod = TransportMethod.POST,
 ) {
+    init {
+        val reserved = setOf("authorization", "proxy-authorization", "cookie")
+        require(headers.keys.none { it.lowercase() in reserved }) { "credential-bearing headers are transport-owned" }
+    }
     override fun toString(): String = "TransportRequest(url=$url, headerNames=${headers.keys}, body=<redacted>)"
 }
 

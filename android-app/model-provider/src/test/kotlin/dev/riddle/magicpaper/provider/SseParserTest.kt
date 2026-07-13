@@ -36,6 +36,14 @@ class SseParserTest {
         )
     }
 
+    @Test fun `invalid retry field preserves the last valid reconnection value`() {
+        val parser = SseParser()
+        assertEquals(
+            listOf(SseEvent.Data("one", retryMillis = 1500), SseEvent.Data("two", retryMillis = 1500)),
+            parser.feed("retry: 1500\ndata: one\n\nretry: invalid\ndata: two\n\n".encodeToByteArray()),
+        )
+    }
+
     @Test fun `done terminates parser and ignores later bytes`() {
         val parser = SseParser()
         val events = parser.feed("data: [DONE]\n\ndata: later\n\n".encodeToByteArray())

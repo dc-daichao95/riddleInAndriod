@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 object ProviderJson {
     class ToolState {
-        internal data class Partial(var id: String? = null, var name: String = "", val arguments: StringBuilder = StringBuilder(), var completed: Boolean = false)
+        internal data class Partial(var id: String? = null, var name: String = "", val arguments: StringBuilder = StringBuilder(), var started: Boolean = false, var completed: Boolean = false)
         internal val calls = mutableMapOf<Int, Partial>()
     }
     fun request(request: ModelRequest): String = JSONObject().apply {
@@ -40,12 +40,20 @@ object ProviderJson {
                     val function = call.optJSONObject("function") ?: JSONObject()
                     val name = function.optString("name")
                     val arguments = function.optString("arguments")
-                    if (name.isNotEmpty()) { partial.name += name; result += ModelEvent.ToolCallStarted(id, partial.name) }
+                    if (name.isNotEmpty()) partial.name += name
+                    if (!partial.started && partial.name.isNotEmpty() && arguments.isNotEmpty()) {
+                        partial.started = true
+                        result += ModelEvent.ToolCallStarted(id, partial.name)
+                    }
                     if (arguments.isNotEmpty()) { partial.arguments.append(arguments); result += ModelEvent.ToolCallArgumentsDelta(id, arguments) }
                 } }
                 if (!choice.isNull("finish_reason")) completion = ModelEvent.Completed(finishReason(choice.getString("finish_reason")))
             }
             if (completion != null) toolState.calls.values.filter { !it.completed && it.id != null && it.name.isNotEmpty() }.forEach { partial ->
+                if (!partial.started) {
+                    partial.started = true
+                    result += ModelEvent.ToolCallStarted(requireNotNull(partial.id), partial.name)
+                }
                 partial.completed = true
                 result += ModelEvent.ToolCallCompleted(ToolCall(requireNotNull(partial.id), partial.name, partial.arguments.toString()))
             }
