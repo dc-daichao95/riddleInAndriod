@@ -43,6 +43,15 @@ class InputRoutingTest {
     }
 
     @Test
+    fun `recognized text is trimmed before staging`() = runTest {
+        val recognizer = FakeRecognizer().apply { result = Result.success("  hello  ") }
+
+        val input = router(recognizer).route(ModelCapabilities(vision = false), page).getOrThrow()
+
+        assertEquals(TurnInput.RecognizedText("hello"), input)
+    }
+
+    @Test
     fun `blank OCR prevents Provider request`() = runTest {
         val recognizer = FakeRecognizer().apply { result = Result.success("   ") }
 

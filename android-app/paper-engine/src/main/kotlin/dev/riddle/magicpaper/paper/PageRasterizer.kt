@@ -9,10 +9,14 @@ import dev.riddle.magicpaper.model.PaperTool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -22,15 +26,41 @@ import kotlin.math.roundToInt
 sealed class PageRasterizationError(message: String) : Exception(message) {
     data object EmptyPage : PageRasterizationError("The page contains no visible ink")
     data object CacheWriteFailed : PageRasterizationError("The temporary page image could not be written")
+    data class CacheCleanupFailed(val fileName: String) :
+        PageRasterizationError("The temporary page image could not be deleted: $fileName")
+}
+
+const val PAGE_CACHE_PREFIX = "riddle-page-"
+
+fun interface PageCacheFileDeletion {
+    fun delete(file: File): Boolean
+}
+
+fun interface PageImageEncoder {
+    fun encode(bitmap: Bitmap, file: File)
+}
+
+private val DEFAULT_FILE_DELETION = PageCacheFileDeletion(File::delete)
+private val DEFAULT_IMAGE_ENCODER = PageImageEncoder { bitmap, file ->
+    FileOutputStream(file).use { output ->
+        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+    }
 }
 
 class RasterizedPage internal constructor(
     val file: File,
     val width: Int,
     val height: Int,
+    private val fileDeletion: PageCacheFileDeletion,
+    private val onDeleted: (File) -> Unit,
 ) : Closeable {
     override fun close() {
-        if (file.exists() && !file.delete()) file.deleteOnExit()
+        if (!file.exists()) {
+            onDeleted(file)
+            return
+        }
+        if (!fileDeletion.delete(file)) throw PageRasterizationError.CacheCleanupFailed(file.name)
+        onDeleted(file)
     }
 }
 
@@ -41,23 +71,65 @@ class PageRasterizer(
     private val paddingPixels: Int = 24,
     private val maxLongSide: Int = 800,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val fileDeletion: PageCacheFileDeletion = DEFAULT_FILE_DELETION,
+    private val imageEncoder: PageImageEncoder = DEFAULT_IMAGE_ENCODER,
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val staleAfterMillis: Long = DEFAULT_STALE_AFTER_MILLIS,
 ) {
+    private val activeCacheFiles = ConcurrentHashMap.newKeySet<File>()
+
     init {
         require(sourceWidth > 0 && sourceHeight > 0)
         require(paddingPixels >= 0)
         require(maxLongSide > 0)
+        require(staleAfterMillis >= 0)
     }
 
-    suspend fun rasterize(strokes: List<PaperStroke>): Result<RasterizedPage> = withContext(dispatcher) {
-        try {
-            val visible = strokes.filter { it.tool == PaperTool.PEN && it.points.isNotEmpty() }
-            if (visible.isEmpty()) return@withContext Result.failure(PageRasterizationError.EmptyPage)
-            Result.success(render(visible))
+    suspend fun rasterize(strokes: List<PaperStroke>): Result<RasterizedPage> {
+        val pendingPage = AtomicReference<RasterizedPage?>()
+        return try {
+            withContext(dispatcher) {
+                try {
+                    sweepStaleFiles()
+                    val visible = strokes.filter { it.tool == PaperTool.PEN && it.points.isNotEmpty() }
+                    if (visible.isEmpty()) return@withContext Result.failure(PageRasterizationError.EmptyPage)
+                    val page = render(visible)
+                    pendingPage.set(page)
+                    currentCoroutineContext().ensureActive()
+                    Result.success(page)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: PageRasterizationError) {
+                    Result.failure(error)
+                } catch (_: Exception) {
+                    Result.failure(PageRasterizationError.CacheWriteFailed)
+                }
+            }.also { pendingPage.set(null) }
         } catch (cancelled: CancellationException) {
+            pendingPage.getAndSet(null)?.let { page ->
+                try {
+                    page.close()
+                } catch (cleanup: PageRasterizationError.CacheCleanupFailed) {
+                    cancelled.addSuppressed(cleanup)
+                }
+            }
             throw cancelled
-        } catch (_: Exception) {
-            Result.failure(PageRasterizationError.CacheWriteFailed)
         }
+    }
+
+    private fun sweepStaleFiles() {
+        val cutoff = nowMillis() - staleAfterMillis
+        cacheDirectory.listFiles().orEmpty()
+            .asSequence()
+            .filter { file -> file.isFile && file.name.startsWith(PAGE_CACHE_PREFIX) }
+            .filter { file -> file.parentFile?.canonicalFile == cacheDirectory.canonicalFile }
+            .filterNot(activeCacheFiles::contains)
+            .filter { file -> file.lastModified() <= cutoff }
+            .sortedBy(File::lastModified)
+            .take(MAX_STALE_FILES_PER_SWEEP)
+            .forEach { file ->
+                if (!fileDeletion.delete(file)) throw PageRasterizationError.CacheCleanupFailed(file.name)
+            }
     }
 
     private fun render(strokes: List<PaperStroke>): RasterizedPage {
@@ -113,18 +185,32 @@ class PageRasterizer(
             }
         }
 
-        cacheDirectory.mkdirs()
-        val file = File.createTempFile("riddle-page-", ".png", cacheDirectory)
         try {
-            FileOutputStream(file).use { output ->
-                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+            cacheDirectory.mkdirs()
+            val file = File.createTempFile(PAGE_CACHE_PREFIX, ".png", cacheDirectory)
+            try {
+                imageEncoder.encode(bitmap, file)
+            } catch (failure: Exception) {
+                if (file.exists() && !fileDeletion.delete(file)) {
+                    val cleanup = PageRasterizationError.CacheCleanupFailed(file.name)
+                    if (failure is CancellationException) {
+                        failure.addSuppressed(cleanup)
+                        throw failure
+                    }
+                    cleanup.addSuppressed(failure)
+                    throw cleanup
+                }
+                throw failure
             }
-        } catch (failure: Exception) {
-            file.delete()
-            throw failure
+            activeCacheFiles.add(file)
+            return RasterizedPage(file, outputWidth, outputHeight, fileDeletion, activeCacheFiles::remove)
         } finally {
             bitmap.recycle()
         }
-        return RasterizedPage(file, outputWidth, outputHeight)
+    }
+
+    private companion object {
+        const val DEFAULT_STALE_AFTER_MILLIS = 60 * 60 * 1_000L
+        const val MAX_STALE_FILES_PER_SWEEP = 64
     }
 }

@@ -8,8 +8,31 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import java.util.Locale
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class MlKitHandwritingRecognizerTest {
+    @Test
+    fun `ML Kit Ink preserves stroke order with deterministic monotonic timestamps`() {
+        val strokes = listOf(
+            PaperStroke(
+                "first",
+                PaperTool.PEN,
+                listOf(NormalizedPoint(.1f, .2f, .01f), NormalizedPoint(.3f, .4f, .01f)),
+            ),
+            PaperStroke("eraser", PaperTool.ERASER, listOf(NormalizedPoint(.5f, .6f, .01f))),
+            PaperStroke("second", PaperTool.PEN, listOf(NormalizedPoint(.7f, .8f, .01f))),
+        )
+
+        val ink = strokes.toMlKitInk()
+
+        assertEquals(2, ink.strokes.size)
+        assertEquals(listOf(.1f, .3f), ink.strokes[0].points.map { it.x })
+        assertEquals(listOf(.7f), ink.strokes[1].points.map { it.x })
+        val timestamps = ink.strokes.flatMap { stroke -> stroke.points.map { requireNotNull(it.timestamp) } }
+        assertEquals(listOf(0L, 1L, 2L), timestamps)
+        assertTrue(timestamps.zipWithNext().all { (first, second) -> first < second })
+    }
+
     @Test
     fun `unsupported locale uses explicit fallback`() = runTest {
         val backend = FakeDigitalInkBackend(supportedTags = setOf("en-US"), downloadedTags = setOf("en-US"))

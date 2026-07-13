@@ -73,15 +73,7 @@ private class MlKitDigitalInkBackend(
             DigitalInkRecognizerOptions.builder(model(languageTag)).build(),
         )
         return try {
-            val ink = Ink.builder().apply {
-                strokes.filter { it.tool == PaperTool.PEN }.forEach { stroke ->
-                    val inkStroke = Ink.Stroke.builder()
-                    stroke.points.forEach { point ->
-                        inkStroke.addPoint(Ink.Point.create(point.x, point.y))
-                    }
-                    if (stroke.points.isNotEmpty()) addStroke(inkStroke.build())
-                }
-            }.build()
+            val ink = strokes.toMlKitInk()
             recognizer.recognize(ink).await().candidates.firstOrNull()?.text.orEmpty()
         } finally {
             recognizer.close()
@@ -98,6 +90,25 @@ private class MlKitDigitalInkBackend(
     } catch (_: MlKitException) {
         null
     }
+}
+
+/**
+ * The normalized stroke domain does not retain event times. ML Kit only requires temporal order,
+ * so stable point order is encoded as synthetic milliseconds starting at zero. This avoids wall
+ * clock input while keeping timestamps strictly increasing across stroke boundaries.
+ */
+internal fun List<PaperStroke>.toMlKitInk(): Ink {
+    var timestampMillis = 0L
+    return Ink.builder().apply {
+        filter { it.tool == PaperTool.PEN }.forEach { stroke ->
+            if (stroke.points.isEmpty()) return@forEach
+            val inkStroke = Ink.Stroke.builder()
+            stroke.points.forEach { point ->
+                inkStroke.addPoint(Ink.Point.create(point.x, point.y, timestampMillis++))
+            }
+            addStroke(inkStroke.build())
+        }
+    }.build()
 }
 
 private suspend fun <T> Task<T>.await(): T = suspendCancellableCoroutine { continuation ->

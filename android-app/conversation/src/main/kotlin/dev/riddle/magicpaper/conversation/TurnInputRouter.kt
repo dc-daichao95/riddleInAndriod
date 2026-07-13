@@ -37,8 +37,9 @@ class TurnInputRouter(
         return try {
             recognizer.recognize(strokes, localeProvider()).fold(
                 onSuccess = { text ->
-                    if (text.isBlank()) Result.failure(InputRoutingError.BlankRecognition)
-                    else Result.success(TurnInput.RecognizedText(text))
+                    val recognizedText = text.trim()
+                    if (recognizedText.isEmpty()) Result.failure(InputRoutingError.BlankRecognition)
+                    else Result.success(TurnInput.RecognizedText(recognizedText))
                 },
                 onFailure = { failure ->
                     val error = failure as? HandwritingRecognitionError

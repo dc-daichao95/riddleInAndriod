@@ -52,3 +52,27 @@ Self-review checked FR-070 through FR-075, AC-009 through AC-011, cancellation p
 ## Remaining limitation
 
 Normal tests use deterministic fakes and make no live provider or model-download calls. Actual ML Kit model availability and handwriting accuracy require a separately provisioned API 36 device/emulator with a downloaded language model; commit routing intentionally reports the missing model as a prerequisite rather than downloading it.
+
+## Review follow-up
+
+All Important review findings were addressed with focused tests first.
+
+- The initial focused RED failed because deterministic ML Kit conversion and managed cache-cleanup contracts did not exist. After those contracts were implemented, `InputRoutingTest.recognized text is trimmed before staging` produced the expected behavioral RED (`"  hello  "` was still staged instead of `"hello"`).
+- Successful OCR is now trimmed before blank checking and staging; whitespace-only OCR remains `InputRoutingError.BlankRecognition`.
+- ML Kit `Ink` conversion is an internal testable seam. Because the normalized Task 1 domain has no timestamps, it deterministically derives synthetic milliseconds `0..N` from preserved stroke/point order. Pen-point timestamps are strictly increasing across stroke boundaries, eraser strokes remain excluded, and no wall clock participates.
+- `deleteOnExit` was removed. `RasterizedPage.close()` deletes synchronously or throws typed `CacheCleanupFailed` without exposing the cache path.
+- Partial encoding failure prioritizes typed cleanup failure when deletion also fails. Cancellation is rethrown and performs cleanup; a typed cleanup failure is attached if cancellation cleanup itself fails.
+- Before rasterization, a direct-directory sweep removes only files with the owned `riddle-page-` prefix older than one hour, skips active page handles, and processes at most 64 files. Unrelated cache files and paths outside the owned cache directory are never deletion candidates.
+- Tests cover trimmed and blank OCR, actual ML Kit stroke/point ordering and timestamps, successful close, close deletion failure, encoding plus deletion failure, bounded owned stale cleanup, cancellation during encoding, and cancellation after an encoded image cannot be handed to the caller.
+
+Final clean review gate:
+
+```powershell
+.\gradlew.bat :paper-engine:clean :conversation:clean :paper-engine:test :conversation:test :paper-engine:lintDebug :conversation:lintDebug --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` (133 tasks; 86 executed, 47 up-to-date).
+
+- `paper-engine`: 33 tests, 0 failures, 0 errors, 0 skipped.
+- `conversation`: 25 tests, 0 failures, 0 errors, 0 skipped.
+- Both module lint gates passed.
