@@ -2,14 +2,14 @@
 
 - Status: `approved`
 - Product: Riddle Android
-- Target platform: Android 16 / API 36 only; compile platform API 36.1
+- Target platform: Android 13 through Android 16 / API 33 through API 36; compile platform API 36.1
 - Design approval: 2026-07-12
 - Reference implementation: Rust application under `src/`
 - Reference design: `doc/detailed-design.md`
 
 ## 1. Problem statement and user value
 
-Riddle currently provides a Harry-Potter-like enchanted diary experience on reMarkable Paper Pro. The Android product must preserve that immersive behavior on Android 16 phones, foldables, and tablets while adding secure configuration for multiple OpenAI-compatible model services.
+Riddle currently provides a Harry-Potter-like enchanted diary experience on reMarkable Paper Pro. The Android product must preserve that immersive behavior on Android 13 through Android 16 phones, foldables, and tablets while adding secure configuration for multiple OpenAI-compatible model services.
 
 The user writes directly on a full-screen magical paper surface. After the user rests the pen or finger, the paper consumes the ink, consults the configured model, and writes a response back stroke by stroke. Conventional chat chrome must not replace this interaction.
 
@@ -35,7 +35,7 @@ The first usable Android release includes:
 
 ## 3. Non-goals
 
-The first release does not include model-triggered Android tools, automatic cross-provider fallback, Android versions earlier than API 36, cloud synchronization, reMarkable memory migration, or background conversations after cancellation. Tool-agent work is tracked in `doc/TODO.md` and requires a separate approved specification.
+The first release does not include model-triggered Android tools, automatic cross-provider fallback, Android versions earlier than API 33, cloud synchronization, reMarkable memory migration, or background conversations after cancellation. Tool-agent work is tracked in `doc/TODO.md` and requires a separate approved specification.
 
 ## 4. User stories
 
@@ -163,7 +163,7 @@ Additional states cover help, history reconstruction, settings, failure, cancell
 
 ## 6. Non-functional requirements
 
-- `NFR-001`: Use Kotlin, Gradle Kotlin DSL, Android Gradle Plugin 9.2.1, Gradle 9.4.1, API 36.1 compilation, `targetSdk = 36`, and `minSdk = 36`.
+- `NFR-001`: Use Kotlin, Gradle Kotlin DSL, Android Gradle Plugin 9.2.1, Gradle 9.4.1, API 36.1 compilation, `targetSdk = 36`, and `minSdk = 33`.
 - `NFR-002`: Compose/Material 3 shall implement app UI; custom Android `View/Canvas` shall implement high-frequency paper input and animation.
 - `NFR-003`: Input and animated points shall not cause full Compose recomposition per point.
 - `NFR-004`: Database, network, OCR, and credential work shall not block the main thread.
@@ -292,7 +292,7 @@ Provider credentials remain outside Room. Every schema change requires migration
 | --- | --- |
 | FR-001–008 | paper-engine unit/Robolectric tests and Android stylus tests |
 | FR-010–020 | pure Kotlin state-machine tests with fake clock/Provider |
-| FR-030–036 | coordinate property tests, window-size tests, Android 16 emulator |
+| FR-030–036 | coordinate property tests, window-size tests, API 33 and API 36.1 emulators |
 | FR-040–045 | gesture-policy unit and integration touch tests |
 | FR-050–061 | shared Provider contract fixtures and fake transport tests |
 | FR-070–075 | rasterizer, OCR routing, and cache deletion tests |
@@ -312,7 +312,7 @@ Required gates after scaffolding:
 ./gradlew connectedCheck
 ```
 
-`connectedCheck` requires Android 16 hardware or emulator profiles for phone, wide/foldable, and tablet layouts.
+`connectedCheck` requires API 33 and API 36.1 emulator profiles. Phone, wide/foldable, and tablet layouts must use the same feature suite without API-level exclusions.
 
 ## 13. Migration and compatibility
 
@@ -326,7 +326,7 @@ Required gates after scaffolding:
 
 Implementation proceeds in independently testable slices:
 
-1. Android 16 scaffold and domain contracts;
+1. Android API 36.1 scaffold and domain contracts;
 2. paper input/rendering and coordinate transforms;
 3. state machine and fake Provider experience;
 4. OpenAI/DeepSeek streaming and secure profiles;
@@ -342,7 +342,7 @@ Each slice keeps the fake Provider experience runnable. Rollback disables/remove
 - Vision models receive images; text-only models use local recognition.
 - Tool-agent capabilities are deferred.
 - Settings defaults to three-finger long press for 2 seconds behind a replaceable policy.
-- Android 16/API 36 is the only supported runtime; the project compiles against API 36.1.
+- Android 13/API 33 through Android 16/API 36 are supported by one full-feature APK; the project compiles against API 36.1 and targets API 36.
 - Finger and pressure stylus input are supported.
 - Rotation is supported with optional portrait lock.
 - OpenAI/DeepSeek presets and custom HTTPS OpenAI-compatible profiles are supported.

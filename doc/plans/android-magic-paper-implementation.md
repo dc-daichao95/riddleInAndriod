@@ -2,15 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build an Android 16 application that preserves Riddle's full-screen enchanted-paper handwriting experience, supports responsive phone/foldable/tablet layouts, and streams replies from OpenAI-compatible and DeepSeek-compatible model services.
+**Goal:** Build one full-feature Android 13 through Android 16 application that preserves Riddle's full-screen enchanted-paper handwriting experience, supports responsive phone/foldable/tablet layouts, and streams replies from OpenAI-compatible and DeepSeek-compatible model services.
 
 **Architecture:** Keep the existing Rust app untouched and add a modular Kotlin project under `android-app/`. Compose owns navigation/settings/accessibility; a custom `MagicPaperView` owns low-latency input and Canvas animation; pure Kotlin state machines coordinate page submission, OCR/vision routing, Provider streams, and Room memory behind provider-neutral contracts.
 
-**Tech Stack:** Android Studio 2026.1.1, Android Studio JBR 21, Gradle 9.4.1, Android Gradle Plugin 9.2.1 with built-in Kotlin, Android compile platform API 36.1, `minSdk/targetSdk` 36, Compose BOM 2025.06.01, Material 3, coroutines 1.10.2, lifecycle 2.9.1, Room 2.7.2, OkHttp 4.12.0, kotlinx-serialization 1.8.1, ML Kit Digital Ink Recognition 18.1.0, JUnit 4.13.2, Turbine 1.2.1, Robolectric 4.14.1.
+**Tech Stack:** Android Studio 2026.1.1, Android Studio JBR 21, Gradle 9.4.1, Android Gradle Plugin 9.2.1 with built-in Kotlin, Android compile platform API 36.1, `minSdk = 33`, `targetSdk = 36`, Compose BOM 2025.06.01, Material 3, coroutines 1.10.2, lifecycle 2.9.1, Room 2.7.2, OkHttp 4.12.0, kotlinx-serialization 1.8.1, ML Kit Digital Ink Recognition 18.1.0, JUnit 4.13.2, Turbine 1.2.1, Robolectric 4.14.1.
 
 ## Global Constraints
 
-- Android 16 runtime only: `targetSdk = 36`, `minSdk = 36`; compile against API 36.1 with the AGP minor-API DSL.
+- Android 13 through Android 16: `targetSdk = 36`, `minSdk = 33`; compile against API 36.1 with the AGP minor-API DSL.
+- Ship one APK with identical features on API 33 and API 36; no reduced Android 13 mode or version-specific test exclusions.
+- Keep compatibility changes minimal: adjust build configuration first and add a local API guard only when a failing API 33 gate proves it necessary.
 - Preserve the Rust implementation and root Cargo files unchanged.
 - Use `dev.riddle.magicpaper` as the initial namespace/application ID and `Riddle` as the display name.
 - No production behavior without a failing test first; configuration/generated wrapper files are the only scaffolding exception.
@@ -41,7 +43,7 @@ android-app/
 └── feature-settings/                    # Provider/memory/orientation settings
 ```
 
-## Task 1: Android 16 build scaffold and domain contracts
+## Task 1: Android API 36.1 build scaffold and domain contracts
 
 **Files:**
 - Create: `android-app/settings.gradle.kts`
@@ -603,7 +605,75 @@ git add android-app/app android-app/feature-paper android-app/feature-settings
 git commit -m "feat(android): assemble immersive Android magic paper app"
 ```
 
-## Task 10: Full verification, documentation, and specification closure
+## Task 10: Android 13 compatibility with full feature parity
+
+**Files:**
+- Modify: every Android module `build.gradle.kts` that declares `minSdk`
+- Modify: `android-app/README.md`
+- Modify: `doc/specs/android-magic-paper-app.md`
+- Modify: `doc/specs/android-13-compatibility.md`
+- Add only if a failing API 33 gate requires it: narrowly scoped Android compatibility code and its regression test
+
+**Interfaces:**
+- Consumes: the complete Task 1 through Task 9 application and test suite.
+- Produces: one unchanged-feature APK supporting API 33 through API 36, plus API 33/API 36.1 parity evidence.
+
+- [ ] **Step 1: Record the RED configuration evidence**
+
+Add a deterministic build/configuration assertion that inspects every Android module and requires `minSdk = 33`. Run it before changing production configuration.
+
+```powershell
+./gradlew verifyAndroidCompatibility
+```
+
+Expected RED: the assertion reports the modules still declaring `minSdk = 36`.
+
+- [ ] **Step 2: Make the minimum configuration-only change**
+
+Change only module `minSdk` declarations from 36 to 33. Keep the API 36.1 compile DSL, `targetSdk = 36`, application ID, dependencies, Provider contracts, Room schema, resources, and UI behavior unchanged.
+
+- [ ] **Step 3: Verify compilation and API usage**
+
+```powershell
+./gradlew verifyAndroidCompatibility test lint assembleDebug
+```
+
+Expected GREEN: all gates pass and lint reports no unguarded API newer than 33. If a gate fails on a real post-33 API use, first add a failing regression test, then implement the smallest local AndroidX compatibility path or `SDK_INT` guard. Do not refactor unrelated code.
+
+- [ ] **Step 4: Install API 33 tooling and create the boundary AVD**
+
+Install `platforms;android-33` and `system-images;android-33;google_apis;x86_64`, then create `Riddle_API_33`. Preserve `Riddle_API_36_1`.
+
+```powershell
+sdkmanager "platforms;android-33" "system-images;android-33;google_apis;x86_64"
+avdmanager create avd -n Riddle_API_33 -k "system-images;android-33;google_apis;x86_64"
+emulator -list-avds
+```
+
+- [ ] **Step 5: Run the identical device suite on both boundary versions**
+
+Run the same `connectedDebugAndroidTest` cases without API-level assumptions, ignored tests, feature flags, or reduced-mode branches on `Riddle_API_33` and `Riddle_API_36_1`. Verify install/launch, writing, inactivity commit, dissolve, streaming reply, cancellation, hidden settings, orientation and portrait lock, Provider settings, Keystore, Room, and draft/process recreation behavior.
+
+```powershell
+./gradlew :app:connectedDebugAndroidTest
+```
+
+Expected: identical test inventory and zero failures/skips on both AVDs. Record any unavailable physical-stylus check separately; it must not be reported as passed.
+
+- [ ] **Step 6: Verify release metadata and scope**
+
+Build the release APK with temporary local signing material outside the repository. Inspect its manifest and signature: package `dev.riddle.magicpaper`, `minSdk = 33`, `targetSdk = 36`, one signer. Review the compatibility production diff and reject any change not directly justified by configuration or a failing API 33 gate.
+
+- [ ] **Step 7: Document and commit the compatibility slice**
+
+Update setup/device-matrix documentation and set `doc/specs/android-13-compatibility.md` to `implemented` only after all mandatory API 33 and API 36.1 gates pass.
+
+```powershell
+git add AGENTS.md android-app doc/specs/android-magic-paper-app.md doc/specs/android-13-compatibility.md doc/plans/android-magic-paper-implementation.md
+git commit -m "feat(android): support Android 13 with full feature parity"
+```
+
+## Task 11: Full verification, documentation, and specification closure
 
 **Files:**
 - Modify: `android-app/README.md`
@@ -629,9 +699,9 @@ For every `FR`, `NFR`, and `AC` in the specification, list the exact test class/
 
 Expected: exit code 0, zero failed tests, zero lint errors, debug APK created.
 
-- [ ] **Step 3: Run Android 16 device matrix**
+- [ ] **Step 3: Run Android 13 and Android 16 boundary device matrix**
 
-Run `connectedCheck` on API 36.1 emulator profiles representing a compact phone, tall phone, landscape/wide foldable, and tablet. On stylus-capable hardware, manually verify pressure, eraser, and palm rejection.
+Run the identical `connectedCheck` suite on API 33 and API 36.1 emulator profiles, with profiles representing a compact phone, tall phone, landscape/wide foldable, and tablet. On stylus-capable hardware, manually verify pressure, eraser, and palm rejection.
 
 ```powershell
 ./gradlew connectedCheck
@@ -660,7 +730,7 @@ git commit -m "docs(android): record architecture and verification evidence"
 
 ## Plan self-review results
 
-- Specification coverage: every FR/NFR group maps to Tasks 1–10 and the traceability audit.
+- Specification coverage: every FR/NFR group maps to Tasks 1 through 11 and the traceability audit.
 - TDD order: each behavior task writes and verifies a failing test before production implementation.
 - Type consistency: domain contracts originate in Task 1; every later task consumes those names through module dependencies.
 - Scope: tool-agent execution remains excluded and tracked in `doc/TODO.md`.
