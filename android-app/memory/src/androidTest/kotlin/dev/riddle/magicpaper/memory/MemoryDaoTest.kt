@@ -7,6 +7,11 @@ import dev.riddle.magicpaper.model.NormalizedPoint
 import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -43,6 +48,8 @@ class MemoryDaoTest {
         assertEquals("answer", stored?.reply)
         assertEquals("provider", stored?.providerId)
         assertEquals("model", stored?.modelId)
+        assertEquals(MemoryPageStatus.COMPLETED, stored?.status)
+        assertEquals("COMPLETED", database.memoryDao().page("page-a")?.status)
         assertEquals(listOf("z-stroke", "a-stroke"), stored?.strokes?.map(PaperStroke::id))
         assertEquals(listOf(0.1f, 0.2f), stored?.strokes?.first()?.points?.map(NormalizedPoint::x))
     }
@@ -96,14 +103,44 @@ class MemoryDaoTest {
 
     @Test
     fun draftReplaceKeepsOnlyLatestRevisionAndNormalizedPoints() = runTest {
-        repository.replaceDraft(DraftPage(1, strokes()))
-        repository.replaceDraft(DraftPage(2, listOf(stroke("replacement", 0.8f, 0.9f))))
+        assertTrue(repository.replaceDraft(DraftPage(1, strokes())))
+        assertTrue(repository.replaceDraft(DraftPage(2, listOf(stroke("replacement", 0.8f, 0.9f)))))
 
         val draft = repository.loadDraft()
 
         assertEquals(2L, draft?.revision)
         assertEquals(listOf("replacement"), draft?.strokes?.map(PaperStroke::id))
         assertEquals(listOf(0.8f, 0.9f), draft?.strokes?.single()?.points?.map(NormalizedPoint::x))
+    }
+
+    @Test
+    fun delayedOlderDraftCannotOverwriteNewerRevisionOrPoints() = runTest {
+        val newestCommitted = CompletableDeferred<Unit>()
+
+        val results = coroutineScope {
+            val delayedOlder = async(Dispatchers.IO) {
+                newestCommitted.await()
+                repository.replaceDraft(DraftPage(10, listOf(stroke("older", 0.1f))))
+            }
+            val newest = async(Dispatchers.IO) {
+                val replaced = repository.replaceDraft(DraftPage(11, listOf(stroke("newest", 0.9f))))
+                newestCommitted.complete(Unit)
+                replaced
+            }
+            awaitAll(newest, delayedOlder)
+        }
+
+        assertEquals(listOf(true, false), results)
+        assertEquals(DraftPage(11, listOf(stroke("newest", 0.9f))), repository.loadDraft())
+    }
+
+    @Test
+    fun equalDraftRevisionIsIdempotentAndDoesNotReplacePoints() = runTest {
+        assertTrue(repository.replaceDraft(DraftPage(11, listOf(stroke("original", 0.4f)))))
+
+        assertFalse(repository.replaceDraft(DraftPage(11, listOf(stroke("conflict", 0.8f)))))
+
+        assertEquals(DraftPage(11, listOf(stroke("original", 0.4f))), repository.loadDraft())
     }
 
     private fun page(id: String, timestamp: Long, strokes: List<PaperStroke>) = CompletedMemoryPage(

@@ -29,6 +29,7 @@ class RoomMemoryRepository(
     }
 
     suspend fun appendCompleted(page: CompletedMemoryPage): Boolean = database.withTransaction {
+        require(page.status == MemoryPageStatus.COMPLETED) { "Only completed memory pages can be appended" }
         val preference = dao.preference() ?: AppPreferenceEntity()
         if (!preference.memoryEnabled) return@withTransaction false
 
@@ -71,10 +72,13 @@ class RoomMemoryRepository(
         dao.upsertPreference(preference.copy(memoryRevision = preference.memoryRevision + 1))
     }
 
-    suspend fun replaceDraft(draft: DraftPage) = database.withTransaction {
+    suspend fun replaceDraft(draft: DraftPage): Boolean = database.withTransaction {
+        val current = dao.draft()
+        if (current != null && draft.revision <= current.revision) return@withTransaction false
         dao.deleteDraft()
         dao.insertDraft(DraftPageEntity(revision = draft.revision))
         dao.insertDraftPoints(draft.strokes.toDraftPoints())
+        true
     }
 
     suspend fun loadDraft(): DraftPage? = database.withTransaction {
@@ -89,6 +93,7 @@ class RoomMemoryRepository(
         completedAtEpochMillis = completedAtEpochMillis,
         transcription = transcription,
         reply = reply,
+        status = status.persistedValue,
         providerId = providerId,
         modelId = modelId,
         recordSchemaVersion = RECORD_SCHEMA_VERSION,
@@ -99,6 +104,7 @@ class RoomMemoryRepository(
         completedAtEpochMillis = completedAtEpochMillis,
         transcription = transcription,
         reply = reply,
+        status = MemoryPageStatus.fromPersistedValue(status),
         providerId = providerId,
         modelId = modelId,
         strokes = strokes,

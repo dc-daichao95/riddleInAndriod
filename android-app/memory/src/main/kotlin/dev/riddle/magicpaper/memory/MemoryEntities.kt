@@ -14,6 +14,7 @@ data class MemoryPageEntity(
     val completedAtEpochMillis: Long,
     val transcription: String,
     val reply: String,
+    val status: String,
     val providerId: String,
     val modelId: String,
     val recordSchemaVersion: Int,
@@ -93,10 +94,21 @@ data class CompletedMemoryPage(
     val completedAtEpochMillis: Long,
     val transcription: String,
     val reply: String,
+    val status: MemoryPageStatus = MemoryPageStatus.COMPLETED,
     val providerId: String,
     val modelId: String,
     val strokes: List<PaperStroke>,
 )
+
+enum class MemoryPageStatus(val persistedValue: String) {
+    COMPLETED("COMPLETED");
+
+    companion object {
+        fun fromPersistedValue(value: String): MemoryPageStatus = entries.singleOrNull {
+            it.persistedValue == value
+        } ?: throw IllegalStateException("Unknown memory page status")
+    }
+}
 
 data class DraftPage(
     val revision: Long,

@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "a1cea4af2b217de3c7138d708c5fb263",
+    "identityHash": "c233b7ae67b1c045cf2ccb502e198bb5",
     "entities": [
       {
         "tableName": "memory_pages",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`pageId` TEXT NOT NULL, `completedAtEpochMillis` INTEGER NOT NULL, `transcription` TEXT NOT NULL, `reply` TEXT NOT NULL, `providerId` TEXT NOT NULL, `modelId` TEXT NOT NULL, `recordSchemaVersion` INTEGER NOT NULL, PRIMARY KEY(`pageId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`pageId` TEXT NOT NULL, `completedAtEpochMillis` INTEGER NOT NULL, `transcription` TEXT NOT NULL, `reply` TEXT NOT NULL, `status` TEXT NOT NULL, `providerId` TEXT NOT NULL, `modelId` TEXT NOT NULL, `recordSchemaVersion` INTEGER NOT NULL, PRIMARY KEY(`pageId`))",
         "fields": [
           {
             "fieldPath": "pageId",
@@ -29,6 +29,12 @@
           {
             "fieldPath": "reply",
             "columnName": "reply",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
             "affinity": "TEXT",
             "notNull": true
           },
@@ -304,7 +310,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a1cea4af2b217de3c7138d708c5fb263')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c233b7ae67b1c045cf2ccb502e198bb5')"
     ]
   }
 }
