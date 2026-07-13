@@ -58,7 +58,7 @@ The first review identified missing explicit provider-pipeline effects, incomple
 
 Added tests before production changes for:
 
-- exact commit-boundary effect ordering: begin turn, rasterize, abstract text recognition, Provider request, and concurrent ink dissolve;
+- explicit preparation and Provider-request effect availability (the final staged dependency is documented below);
 - blank listening page through `InkChanged`, pre-deadline tick, exact deadline, and exactly-once transition;
 - cancellation clearing committed ink and preventing a later tick from recommitting;
 - backward and near-`Long.MAX_VALUE` ticks;
@@ -77,3 +77,24 @@ Focused command: `./gradlew :conversation:test --no-daemon` — exit 0.
 Full command: `./gradlew :conversation:clean :conversation:test --no-daemon` — `BUILD SUCCESSFUL`; 16 tests, 0 failures, 0 errors, 0 skipped.
 
 The reducer still performs no I/O and reads no clock. Deadline comparison rejects backward ticks and avoids subtract/add overflow. OCR and provider routing remain abstract effects; no Task 7 implementation was introduced.
+
+## Staged-pipeline race fix
+
+Follow-up review found that emitting preparation and `RequestProvider` together could start collection before the reducer entered its delta-accepting state. The pipeline is now explicitly staged:
+
+1. The inactivity boundary enters `Drinking` and emits `BeginTurn`, `Rasterize`, and `RenderInkDissolve`. No Provider request exists yet.
+2. A later executor supplies `TurnInputPrepared(ModelRequest)` after Task 7's abstract preparation/routing boundary completes.
+3. That reducer transition atomically enters `Thinking` and emits exactly one `RequestProvider` carrying the complete provider-neutral request.
+4. A `TextDelta` delivered immediately afterward begins handwriting and is retained.
+
+No OCR implementation or routing policy is present in Task 4.
+
+### Race RED/GREEN evidence
+
+The failing test was added first and the focused command failed on the missing `TurnInputPrepared` input and the old page-ID-only `RequestProvider` effect.
+
+After the minimum staged implementation:
+
+- `./gradlew :conversation:test --no-daemon` — `BUILD SUCCESSFUL`;
+- `./gradlew :conversation:clean :conversation:test --no-daemon` — `BUILD SUCCESSFUL`;
+- XML results: 17 tests, 0 failures, 0 errors, 0 skipped.

@@ -3,6 +3,9 @@ package dev.riddle.magicpaper.conversation
 import dev.riddle.magicpaper.model.FinishReason
 import dev.riddle.magicpaper.model.ModelError
 import dev.riddle.magicpaper.model.ModelEvent
+import dev.riddle.magicpaper.model.Message
+import dev.riddle.magicpaper.model.MessageRole
+import dev.riddle.magicpaper.model.ModelRequest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -21,8 +24,6 @@ class ConversationStateMachineTest {
             listOf(
                 ConversationEffect.BeginTurn("page-1"),
                 ConversationEffect.Rasterize("page-1"),
-                ConversationEffect.RecognizeText("page-1"),
-                ConversationEffect.RequestProvider("page-1"),
                 ConversationEffect.RenderInkDissolve("page-1"),
             ),
             committed.effects,
@@ -37,13 +38,15 @@ class ConversationStateMachineTest {
         assertEquals(state, machine.transition(state, ConversationInput.Tick(10_000)).state)
     }
 
-    @Test fun `turn started acknowledgement only advances to thinking because pipeline began at commit`() {
+    @Test fun `prepared input atomically enters thinking and requests provider exactly once`() {
+        val request = request()
         val result = machine.transition(
             ConversationState.Drinking(page, turnStartedAtMillis = 3_800),
-            ConversationInput.TurnStarted,
+            ConversationInput.TurnInputPrepared(request),
         )
-        assertTrue(result.effects.isEmpty())
+        assertEquals(listOf(ConversationEffect.RequestProvider(request)), result.effects)
         assertIs<ConversationState.Thinking>(result.state)
+        assertTrue(machine.transition(result.state, ConversationInput.TurnInputPrepared(request)).effects.isEmpty())
     }
 
     @Test fun `first text delta starts handwriting and later delta appends`() {
@@ -103,7 +106,20 @@ class ConversationStateMachineTest {
         assertTrue(machine.transition(listening, ConversationInput.Tick(3_799)).effects.isEmpty())
         val committed = machine.transition(listening, ConversationInput.Tick(3_800))
         assertEquals(1, committed.effects.count { it is ConversationEffect.BeginTurn })
+        assertTrue(committed.effects.none { it is ConversationEffect.RequestProvider })
         assertTrue(machine.transition(committed.state, ConversationInput.Tick(6_600)).effects.isEmpty())
+    }
+
+    @Test fun `immediate first delta after prepared input starts handwriting`() {
+        val blank = ConversationState.Listening(page.copy(hasVisibleInk = false), 0)
+        val listening = machine.transition(blank, ConversationInput.InkChanged(1_000, true)).state
+        val drinking = machine.transition(listening, ConversationInput.Tick(3_800))
+        assertTrue(drinking.effects.none { it is ConversationEffect.RequestProvider })
+        val prepared = machine.transition(drinking.state, ConversationInput.TurnInputPrepared(request()))
+        assertEquals(1, prepared.effects.count { it is ConversationEffect.RequestProvider })
+        val delta = machine.transition(prepared.state, ConversationInput.ProviderEvent(ModelEvent.TextDelta("now")))
+        assertEquals(listOf(ConversationEffect.RenderHandwriting("now", append = false)), delta.effects)
+        assertEquals("now", assertIs<ConversationState.Replying>(delta.state).reply)
     }
 
     @Test fun `backward and overflowing ticks do not commit`() {
@@ -112,4 +128,9 @@ class ConversationStateMachineTest {
         val extreme = ConversationState.Listening(page, Long.MAX_VALUE - 1_000)
         assertTrue(machine.transition(extreme, ConversationInput.Tick(Long.MAX_VALUE)).effects.isEmpty())
     }
+
+    private fun request() = ModelRequest(
+        modelId = "fake",
+        messages = listOf(Message(MessageRole.USER, "question")),
+    )
 }

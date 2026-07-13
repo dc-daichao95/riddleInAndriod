@@ -5,8 +5,9 @@ import dev.riddle.magicpaper.model.ModelEvent
 class ConversationStateMachine {
     fun transition(state: ConversationState, input: ConversationInput): Transition = when {
         state is ConversationState.Listening && input is ConversationInput.Tick -> commitIfDue(state, input)
-        state is ConversationState.Drinking && input is ConversationInput.TurnStarted -> Transition(
+        state is ConversationState.Drinking && input is ConversationInput.TurnInputPrepared -> Transition(
             ConversationState.Thinking(state.page, state.turnStartedAtMillis),
+            listOf(ConversationEffect.RequestProvider(input.request)),
         )
         input is ConversationInput.ProviderEvent -> providerEvent(state, input.event)
         state is ConversationState.Listening && input is ConversationInput.InkChanged -> Transition(
@@ -34,8 +35,6 @@ class ConversationStateMachine {
             listOf(
                 ConversationEffect.BeginTurn(state.page.id),
                 ConversationEffect.Rasterize(state.page.id),
-                ConversationEffect.RecognizeText(state.page.id),
-                ConversationEffect.RequestProvider(state.page.id),
                 ConversationEffect.RenderInkDissolve(state.page.id),
             ),
         )

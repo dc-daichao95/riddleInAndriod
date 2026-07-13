@@ -1,12 +1,12 @@
 package dev.riddle.magicpaper.conversation
 
 import dev.riddle.magicpaper.model.FinishReason
+import dev.riddle.magicpaper.model.ModelRequest
 
 sealed interface ConversationEffect {
     data class BeginTurn(val pageId: String) : ConversationEffect
     data class Rasterize(val pageId: String) : ConversationEffect
-    data class RecognizeText(val pageId: String) : ConversationEffect
-    data class RequestProvider(val pageId: String) : ConversationEffect
+    data class RequestProvider(val request: ModelRequest) : ConversationEffect
     data class RenderInkDissolve(val pageId: String) : ConversationEffect
     data class RenderHandwriting(val text: String, val append: Boolean) : ConversationEffect
     data class PersistCompletedTurn(val pageId: String, val reply: String) : ConversationEffect
