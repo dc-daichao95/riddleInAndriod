@@ -7,8 +7,6 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import dev.riddle.magicpaper.model.NormalizedPoint
-import dev.riddle.magicpaper.model.PaperStroke
-import dev.riddle.magicpaper.model.PaperTool
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -21,8 +19,7 @@ class MagicPaperView @JvmOverloads constructor(
     var settingsEntryPolicy: SettingsEntryPolicy = ThreeFingerLongPressPolicy()
 
     private val inputReducer = PaperInputReducer()
-    private val dissolvePattern = DissolvePattern()
-    private val dissolveSelection = DissolveSelection(dissolvePattern)
+    private val inkBitmapCache = InkBitmapCache(inkColor = context.getColor(R.color.magic_paper_ink))
     private val inkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = context.getColor(R.color.magic_paper_ink)
         style = Paint.Style.STROKE
@@ -31,7 +28,9 @@ class MagicPaperView @JvmOverloads constructor(
     }
     private val pointPaint = Paint(inkPaint).apply { style = Paint.Style.FILL }
     private var renderModel = PaperRenderModel()
-    private var renderCache: List<CachedStroke> = emptyList()
+    private var renderCache: CachedInkBitmap? = null
+    private val previewDots = mutableListOf<NormalizedPoint>()
+    private val previewSegments = mutableListOf<PreviewSegment>()
 
     init {
         isFocusable = true
@@ -42,7 +41,8 @@ class MagicPaperView @JvmOverloads constructor(
     fun submitRenderModel(model: PaperRenderModel) {
         renderModel = model.copy(strokes = model.strokes.toList())
         rebuildRenderCache()
-        inputReducer.clearPreview()
+        previewDots.clear()
+        previewSegments.clear()
         postInvalidateOnAnimation()
     }
 
@@ -67,18 +67,17 @@ class MagicPaperView @JvmOverloads constructor(
         if (width <= 0 || height <= 0) return false
         if (event.pointerCount > 0) dispatchSettingsFrame(event)
         val change = toInputChange(event) ?: return true
-        val before = inputReducer.preview
-        inputReducer.reduce(change).forEach(onPaperIntent)
-        invalidatePreviewDelta(before, inputReducer.preview)
+        val reduction = inputReducer.reduce(change)
+        reduction.intents.forEach(onPaperIntent)
+        applyPreviewDelta(reduction.previewDelta)
         return true
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        renderCache.forEach { stroke -> stroke.primitives.forEach { drawPrimitive(canvas, it) } }
-        val preview = inputReducer.preview
-        preview.points.forEach { drawPoint(canvas, it) }
-        preview.segments.forEach { drawSegment(canvas, it.from, it.to) }
+        renderCache?.let { canvas.drawBitmap(it.bitmap, 0f, 0f, null) }
+        previewDots.forEach { drawPoint(canvas, it) }
+        previewSegments.forEach { drawSegment(canvas, it.from, it.to) }
     }
 
     private fun toInputChange(event: MotionEvent): InputChange? {
@@ -131,35 +130,8 @@ class MagicPaperView @JvmOverloads constructor(
 
     private fun rebuildRenderCache() {
         if (width <= 0 || height <= 0) return
-        renderCache = renderModel.strokes.filter { it.tool == PaperTool.PEN }.map(::cacheStroke)
-    }
-
-    private fun cacheStroke(stroke: PaperStroke): CachedStroke {
-        val stage = renderModel.dissolveStage
-        if (stage == null) return CachedStroke(stroke.points.zipWithNext { from, to -> DrawPrimitive.NormalizedLine(from, to) } + stroke.points.take(1).map(DrawPrimitive::NormalizedDot))
-        val primitives = mutableListOf<DrawPrimitive>()
-        if (stroke.points.size == 1) {
-            val point = stroke.points.single()
-            val pixel = pixel(point)
-            if (!dissolvePattern.shouldErase(pixel.x, pixel.y, stage)) primitives += DrawPrimitive.NormalizedDot(point)
-        }
-        stroke.points.zipWithNext().forEach { (from, to) ->
-            val width = max(1f, (from.radius + to.radius) * min(this.width, this.height))
-            dissolveSelection.survivingRuns(pixel(from), pixel(to), stage).forEach { run -> primitives += DrawPrimitive.PixelLine(run.pixels, width) }
-        }
-        return CachedStroke(primitives)
-    }
-
-    private fun pixel(point: NormalizedPoint) = PixelCoordinate((point.x * width).toInt(), (point.y * height).toInt())
-
-    private fun drawPrimitive(canvas: Canvas, primitive: DrawPrimitive) = when (primitive) {
-        is DrawPrimitive.NormalizedDot -> drawPoint(canvas, primitive.point)
-        is DrawPrimitive.NormalizedLine -> drawSegment(canvas, primitive.from, primitive.to)
-        is DrawPrimitive.PixelLine -> {
-            inkPaint.strokeWidth = primitive.width
-            if (primitive.pixels.size == 1) canvas.drawCircle(primitive.pixels[0].x.toFloat(), primitive.pixels[0].y.toFloat(), primitive.width / 2f, pointPaint)
-            primitive.pixels.zipWithNext().forEach { (from, to) -> canvas.drawLine(from.x.toFloat(), from.y.toFloat(), to.x.toFloat(), to.y.toFloat(), inkPaint) }
-        }
+        renderCache?.bitmap?.recycle()
+        renderCache = inkBitmapCache.build(renderModel.strokes, width, height, renderModel.dissolveStage)
     }
 
     private fun drawPoint(canvas: Canvas, point: NormalizedPoint) {
@@ -172,9 +144,13 @@ class MagicPaperView @JvmOverloads constructor(
         canvas.drawLine(from.x * width, from.y * height, to.x * width, to.y * height, inkPaint)
     }
 
-    private fun invalidatePreviewDelta(before: PaperInputPreview, after: PaperInputPreview) {
-        after.points.drop(before.points.size).forEach(::invalidatePoint)
-        after.segments.drop(before.segments.size).forEach { invalidateSegment(it.from, it.to) }
+    private fun applyPreviewDelta(delta: PreviewDelta) {
+        previewDots += delta.inkDots
+        previewSegments += delta.inkSegments
+        delta.inkDots.forEach(::invalidatePoint)
+        delta.dirtyPoints.forEach(::invalidatePoint)
+        delta.inkSegments.forEach { invalidateSegment(it.from, it.to) }
+        delta.dirtySegments.forEach { invalidateSegment(it.from, it.to) }
     }
 
     private fun invalidatePoint(point: NormalizedPoint) = invalidateSegment(point, point)
@@ -187,12 +163,5 @@ class MagicPaperView @JvmOverloads constructor(
             ceil(max(from.x, to.x) * width + radius).toInt(),
             ceil(max(from.y, to.y) * height + radius).toInt(),
         )
-    }
-
-    private data class CachedStroke(val primitives: List<DrawPrimitive>)
-    private sealed interface DrawPrimitive {
-        data class NormalizedDot(val point: NormalizedPoint) : DrawPrimitive
-        data class NormalizedLine(val from: NormalizedPoint, val to: NormalizedPoint) : DrawPrimitive
-        data class PixelLine(val pixels: List<PixelCoordinate>, val width: Float) : DrawPrimitive
     }
 }

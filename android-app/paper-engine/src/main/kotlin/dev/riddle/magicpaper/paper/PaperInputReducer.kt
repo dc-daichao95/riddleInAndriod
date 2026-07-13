@@ -25,10 +25,17 @@ sealed interface InputChange {
 }
 
 data class PreviewSegment(val from: NormalizedPoint, val to: NormalizedPoint)
-data class PaperInputPreview(
-    val points: List<NormalizedPoint> = emptyList(),
-    val segments: List<PreviewSegment> = emptyList(),
+data class PreviewDelta(
+    val inkDots: List<NormalizedPoint> = emptyList(),
+    val inkSegments: List<PreviewSegment> = emptyList(),
+    val dirtyPoints: List<NormalizedPoint> = emptyList(),
+    val dirtySegments: List<PreviewSegment> = emptyList(),
 )
+
+data class InputReduction(
+    val intents: List<PaperIntent>,
+    val previewDelta: PreviewDelta,
+) : List<PaperIntent> by intents
 
 class PaperInputReducer(
     private val strokeReducer: StrokeReducer = StrokeReducer(),
@@ -39,30 +46,25 @@ class PaperInputReducer(
     private var activeTool: PointerTool? = null
     private var activeStrokeId: String? = null
     private var lastPoint: NormalizedPoint? = null
-    private val previewPoints = mutableListOf<NormalizedPoint>()
-    private val previewSegments = mutableListOf<PreviewSegment>()
     private var stylusInProximity = false
-
-    val preview: PaperInputPreview
-        get() = PaperInputPreview(previewPoints.toList(), previewSegments.toList())
+    private var deltaBuilder = DeltaBuilder()
 
     fun onStylusProximity(inProximity: Boolean) {
         stylusInProximity = inProximity
         strokeReducer.onStylusProximity(inProximity || activeTool == PointerTool.STYLUS || activeTool == PointerTool.ERASER)
     }
 
-    fun clearPreview() {
-        previewPoints.clear()
-        previewSegments.clear()
-    }
-
-    fun reduce(change: InputChange): List<PaperIntent> = when (change) {
-        is InputChange.Down -> begin(change.point)
-        is InputChange.PointerDown -> if (activePointerId == null) begin(change.point) else emptyList()
-        is InputChange.Move -> move(change)
-        is InputChange.PointerUp -> if (change.pointerId == activePointerId) finish(change.point) else emptyList()
-        is InputChange.Up -> if (change.pointerId == activePointerId) finish(change.point) else emptyList()
-        InputChange.Cancel -> cancel()
+    fun reduce(change: InputChange): InputReduction {
+        deltaBuilder = DeltaBuilder()
+        val intents = when (change) {
+            is InputChange.Down -> begin(change.point)
+            is InputChange.PointerDown -> if (activePointerId == null) begin(change.point) else emptyList()
+            is InputChange.Move -> move(change)
+            is InputChange.PointerUp -> if (change.pointerId == activePointerId) finish(change.point) else emptyList()
+            is InputChange.Up -> if (change.pointerId == activePointerId) finish(change.point) else emptyList()
+            InputChange.Cancel -> cancel()
+        }
+        return InputReduction(intents, deltaBuilder.build())
     }
 
     private fun begin(input: InputPoint): List<PaperIntent> {
@@ -72,7 +74,7 @@ class PaperInputReducer(
         if (input.tool != PointerTool.FINGER) strokeReducer.onStylusProximity(true)
         val point = normalize(input)
         lastPoint = point
-        previewPoints += point
+        if (input.tool == PointerTool.ERASER) deltaBuilder.dirtyPoints += point else deltaBuilder.inkDots += point
         return if (input.tool == PointerTool.ERASER) {
             listOf(PaperIntent.Erase(point))
         } else {
@@ -94,7 +96,10 @@ class PaperInputReducer(
         val point = normalize(input)
         val previous = lastPoint
         if (point == previous) return emptyList()
-        if (previous != null) previewSegments += PreviewSegment(previous, point)
+        if (previous != null) {
+            val segment = PreviewSegment(previous, point)
+            if (activeTool == PointerTool.ERASER) deltaBuilder.dirtySegments += segment else deltaBuilder.inkSegments += segment
+        }
         lastPoint = point
         return if (activeTool == PointerTool.ERASER) {
             listOf(PaperIntent.Erase(point))
@@ -128,5 +133,13 @@ class PaperInputReducer(
 
     private companion object {
         val nextStrokeId = AtomicLong()
+    }
+
+    private class DeltaBuilder {
+        val inkDots = mutableListOf<NormalizedPoint>()
+        val inkSegments = mutableListOf<PreviewSegment>()
+        val dirtyPoints = mutableListOf<NormalizedPoint>()
+        val dirtySegments = mutableListOf<PreviewSegment>()
+        fun build() = PreviewDelta(inkDots, inkSegments, dirtyPoints, dirtySegments)
     }
 }

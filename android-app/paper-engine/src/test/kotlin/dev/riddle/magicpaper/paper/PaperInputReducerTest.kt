@@ -61,9 +61,9 @@ class PaperInputReducerTest {
     @Test
     fun `down immediately creates a render-only preview dot`() {
         val reducer = PaperInputReducer(strokeIds = { "s1" })
-        reducer.reduce(InputChange.Down(stylusPoint))
-        assertEquals(1, reducer.preview.points.size)
-        assertTrue(reducer.preview.segments.isEmpty())
+        val reduction = reducer.reduce(InputChange.Down(stylusPoint))
+        assertEquals(1, reduction.previewDelta.inkDots.size)
+        assertTrue(reduction.previewDelta.inkSegments.isEmpty())
     }
 
     @Test
