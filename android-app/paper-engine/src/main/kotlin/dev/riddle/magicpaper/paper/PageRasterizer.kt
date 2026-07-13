@@ -16,6 +16,7 @@ import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -51,21 +52,27 @@ class RasterizedPage internal constructor(
     val file: File,
     val width: Int,
     val height: Int,
+    private val cacheDirectory: File,
     private val fileDeletion: PageCacheFileDeletion,
-    private val onDeleted: (File) -> Unit,
 ) : Closeable {
+    private val closed = AtomicBoolean(false)
+
     override fun close() {
-        if (!file.exists()) {
-            onDeleted(file)
-            return
+        if (!closed.compareAndSet(false, true)) return
+        PageCacheOwnershipRegistry.withDirectory(cacheDirectory) { ownership ->
+            try {
+                if (file.exists() && !fileDeletion.delete(file)) {
+                    throw PageRasterizationError.CacheCleanupFailed(file.name)
+                }
+            } finally {
+                ownership.unregister(file)
+            }
         }
-        if (!fileDeletion.delete(file)) throw PageRasterizationError.CacheCleanupFailed(file.name)
-        onDeleted(file)
     }
 }
 
 class PageRasterizer(
-    private val cacheDirectory: File,
+    cacheDirectory: File,
     private val sourceWidth: Int,
     private val sourceHeight: Int,
     private val paddingPixels: Int = 24,
@@ -76,7 +83,7 @@ class PageRasterizer(
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val staleAfterMillis: Long = DEFAULT_STALE_AFTER_MILLIS,
 ) {
-    private val activeCacheFiles = ConcurrentHashMap.newKeySet<File>()
+    private val cacheDirectory = cacheDirectory.canonicalFile
 
     init {
         require(sourceWidth > 0 && sourceHeight > 0)
@@ -119,17 +126,19 @@ class PageRasterizer(
 
     private fun sweepStaleFiles() {
         val cutoff = nowMillis() - staleAfterMillis
-        cacheDirectory.listFiles().orEmpty()
-            .asSequence()
-            .filter { file -> file.isFile && file.name.startsWith(PAGE_CACHE_PREFIX) }
-            .filter { file -> file.parentFile?.canonicalFile == cacheDirectory.canonicalFile }
-            .filterNot(activeCacheFiles::contains)
-            .filter { file -> file.lastModified() <= cutoff }
-            .sortedBy(File::lastModified)
-            .take(MAX_STALE_FILES_PER_SWEEP)
-            .forEach { file ->
-                if (!fileDeletion.delete(file)) throw PageRasterizationError.CacheCleanupFailed(file.name)
-            }
+        PageCacheOwnershipRegistry.withDirectory(cacheDirectory) { ownership ->
+            cacheDirectory.listFiles().orEmpty()
+                .asSequence()
+                .filter { file -> file.isFile && file.name.startsWith(PAGE_CACHE_PREFIX) }
+                .filter { file -> file.parentFile?.canonicalFile == cacheDirectory }
+                .filterNot(ownership::isActive)
+                .filter { file -> file.lastModified() <= cutoff }
+                .sortedBy(File::lastModified)
+                .take(MAX_STALE_FILES_PER_SWEEP)
+                .forEach { file ->
+                    if (!fileDeletion.delete(file)) throw PageRasterizationError.CacheCleanupFailed(file.name)
+                }
+        }
     }
 
     private fun render(strokes: List<PaperStroke>): RasterizedPage {
@@ -186,24 +195,26 @@ class PageRasterizer(
         }
 
         try {
-            cacheDirectory.mkdirs()
-            val file = File.createTempFile(PAGE_CACHE_PREFIX, ".png", cacheDirectory)
-            try {
-                imageEncoder.encode(bitmap, file)
-            } catch (failure: Exception) {
-                if (file.exists() && !fileDeletion.delete(file)) {
-                    val cleanup = PageRasterizationError.CacheCleanupFailed(file.name)
-                    if (failure is CancellationException) {
-                        failure.addSuppressed(cleanup)
-                        throw failure
+            return PageCacheOwnershipRegistry.withDirectory(cacheDirectory) { ownership ->
+                cacheDirectory.mkdirs()
+                val file = File.createTempFile(PAGE_CACHE_PREFIX, ".png", cacheDirectory)
+                try {
+                    imageEncoder.encode(bitmap, file)
+                } catch (failure: Exception) {
+                    if (file.exists() && !fileDeletion.delete(file)) {
+                        val cleanup = PageRasterizationError.CacheCleanupFailed(file.name)
+                        if (failure is CancellationException) {
+                            failure.addSuppressed(cleanup)
+                            throw failure
+                        }
+                        cleanup.addSuppressed(failure)
+                        throw cleanup
                     }
-                    cleanup.addSuppressed(failure)
-                    throw cleanup
+                    throw failure
                 }
-                throw failure
+                ownership.register(file)
+                RasterizedPage(file, outputWidth, outputHeight, cacheDirectory, fileDeletion)
             }
-            activeCacheFiles.add(file)
-            return RasterizedPage(file, outputWidth, outputHeight, fileDeletion, activeCacheFiles::remove)
         } finally {
             bitmap.recycle()
         }
@@ -212,5 +223,53 @@ class PageRasterizer(
     private companion object {
         const val DEFAULT_STALE_AFTER_MILLIS = 60 * 60 * 1_000L
         const val MAX_STALE_FILES_PER_SWEEP = 64
+    }
+}
+
+private object PageCacheOwnershipRegistry {
+    private class DirectoryState {
+        val lock = Any()
+        val activeFileRefCounts = mutableMapOf<String, Int>()
+        var users: Int = 0
+    }
+
+    class DirectoryOwnership internal constructor(
+        private val activeFileRefCounts: MutableMap<String, Int>,
+    ) {
+        fun register(file: File) {
+            activeFileRefCounts[file.name] = activeFileRefCounts.getOrDefault(file.name, 0) + 1
+        }
+
+        fun unregister(file: File) {
+            val count = activeFileRefCounts[file.name] ?: return
+            if (count == 1) activeFileRefCounts.remove(file.name)
+            else activeFileRefCounts[file.name] = count - 1
+        }
+
+        fun isActive(file: File): Boolean = activeFileRefCounts.containsKey(file.name)
+    }
+
+    private val directories = ConcurrentHashMap<String, DirectoryState>()
+
+    fun <T> withDirectory(directory: File, block: (DirectoryOwnership) -> T): T {
+        val key = directory.toPath().toAbsolutePath().normalize().toString()
+        val state = checkNotNull(directories.compute(key) { _, existing ->
+            (existing ?: DirectoryState()).also { current ->
+                synchronized(current.lock) { current.users += 1 }
+            }
+        })
+        try {
+            return synchronized(state.lock) {
+                block(DirectoryOwnership(state.activeFileRefCounts))
+            }
+        } finally {
+            directories.compute(key) { _, current ->
+                if (current !== state) return@compute current
+                synchronized(state.lock) {
+                    state.users -= 1
+                    if (state.users == 0 && state.activeFileRefCounts.isEmpty()) null else state
+                }
+            }
+        }
     }
 }

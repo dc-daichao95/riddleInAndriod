@@ -76,3 +76,31 @@ Result: `BUILD SUCCESSFUL` (133 tasks; 86 executed, 47 up-to-date).
 - `paper-engine`: 33 tests, 0 failures, 0 errors, 0 skipped.
 - `conversation`: 25 tests, 0 failures, 0 errors, 0 skipped.
 - Both module lint gates passed.
+
+## Cross-instance ownership follow-up
+
+The remaining Important review finding was reproduced first: with per-rasterizer active sets, a second `PageRasterizer` targeting the same cache directory swept the first rasterizer's still-open page when its timestamp met the stale threshold.
+
+The cache now has a process-wide, canonical-directory-scoped ownership registry:
+
+- directory state uses active-file refcounts and a per-directory lock;
+- cache creation plus registration, stale candidate selection/deletion, and close plus unregistration are serialized through that directory state;
+- equivalent `File` aliases converge on the canonical cache directory;
+- `close()` is atomic and idempotent, unregisters exactly once in `finally`, and still surfaces typed immediate deletion failure;
+- after failed close, the unregistered leftover is eligible for a later bounded managed sweep;
+- registry entries are removed when they have no users and no active files, avoiding empty static directory-state retention;
+- prefix, canonical parent, age, and per-sweep count restrictions remain in force.
+
+Focused RED/GREEN coverage proves an open page survives a stale sweep from a second rasterizer and becomes sweepable only after close/unregister. A deterministic latch-controlled concurrency test also proves a sweep cannot race the interval between cache-file creation and registration.
+
+Final clean gate after this fix:
+
+```powershell
+.\gradlew.bat :paper-engine:clean :conversation:clean :paper-engine:test :conversation:test :paper-engine:lintDebug :conversation:lintDebug --no-daemon
+```
+
+Result: `BUILD SUCCESSFUL` (133 tasks; 86 executed, 47 up-to-date).
+
+- `paper-engine`: 35 tests, 0 failures, 0 errors, 0 skipped.
+- `conversation`: 25 tests, 0 failures, 0 errors, 0 skipped.
+- Both module lint gates passed.

@@ -7,6 +7,7 @@ import dev.riddle.magicpaper.model.NormalizedPoint
 import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -17,6 +18,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertFailsWith
@@ -141,6 +144,75 @@ class PageRasterizerTest {
 
         assertTrue(!staleOwned.exists())
         assertTrue(unrelated.exists())
+    }
+
+    @Test
+    fun `rasterizers sharing a cache directory preserve active page until one-shot close unregisters it`() = runTest {
+        val owner = PageRasterizer(
+            temporaryFolder.root,
+            sourceWidth = 1_000,
+            sourceHeight = 1_000,
+            fileDeletion = PageCacheFileDeletion { false },
+        )
+        val sweeper = PageRasterizer(
+            temporaryFolder.root.canonicalFile,
+            sourceWidth = 1_000,
+            sourceHeight = 1_000,
+            nowMillis = { 7_200_000L },
+            staleAfterMillis = 3_600_000L,
+        )
+        val page = owner.rasterize(listOf(stroke(point(.5f, .5f, .02f)))).getOrThrow()
+        page.file.setLastModified(0L)
+
+        assertIs<PageRasterizationError.EmptyPage>(sweeper.rasterize(emptyList()).exceptionOrNull())
+        assertTrue(page.file.exists(), "another rasterizer must not sweep an active page")
+
+        assertFailsWith<PageRasterizationError.CacheCleanupFailed> { page.close() }
+        page.close()
+        assertTrue(page.file.exists(), "failed close remains for managed stale cleanup")
+
+        assertIs<PageRasterizationError.EmptyPage>(sweeper.rasterize(emptyList()).exceptionOrNull())
+        assertTrue(!page.file.exists(), "closed page is eligible for a later stale sweep")
+    }
+
+    @Test
+    fun `concurrent sweep cannot race page creation before directory registration`() = runTest {
+        val encodingStarted = CountDownLatch(1)
+        val allowEncodingToFinish = CountDownLatch(1)
+        val sweepStarted = CountDownLatch(1)
+        val owner = PageRasterizer(
+            temporaryFolder.root,
+            sourceWidth = 1_000,
+            sourceHeight = 1_000,
+            imageEncoder = PageImageEncoder { _, file ->
+                file.setLastModified(0L)
+                encodingStarted.countDown()
+                check(allowEncodingToFinish.await(5, TimeUnit.SECONDS))
+            },
+        )
+        val sweeper = PageRasterizer(
+            temporaryFolder.root,
+            sourceWidth = 1_000,
+            sourceHeight = 1_000,
+            nowMillis = {
+                sweepStarted.countDown()
+                7_200_000L
+            },
+            staleAfterMillis = 3_600_000L,
+        )
+        val pageResult = async(Dispatchers.Default) {
+            owner.rasterize(listOf(stroke(point(.5f, .5f, .02f))))
+        }
+        assertTrue(encodingStarted.await(5, TimeUnit.SECONDS))
+        val sweepResult = async(Dispatchers.Default) { sweeper.rasterize(emptyList()) }
+        assertTrue(sweepStarted.await(5, TimeUnit.SECONDS))
+
+        assertTrue(!sweepResult.isCompleted, "sweep must wait for atomic file registration")
+        allowEncodingToFinish.countDown()
+        val page = pageResult.await().getOrThrow()
+        assertIs<PageRasterizationError.EmptyPage>(sweepResult.await().exceptionOrNull())
+        assertTrue(page.file.exists())
+        page.close()
     }
 
     @Test
