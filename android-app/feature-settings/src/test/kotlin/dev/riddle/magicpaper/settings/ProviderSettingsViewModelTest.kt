@@ -20,6 +20,103 @@ import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProviderSettingsViewModelTest {
+    @Test fun `new profile throw after commit removes profile before credential rollback`() = runTest {
+        val durable = FakeProfiles()
+        val profiles = AmbiguousProfiles(durable, upsertFailure = FailureMode.Throw)
+        val credentials = FakeCredentials()
+        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+
+        val result = vm.save(draft(), "new-secret")
+
+        assertEquals(SettingsOperation.Failed(SettingsError.StorageUnavailable), result)
+        assertTrue(durable.items.isEmpty())
+        assertTrue(credentials.values.isEmpty())
+    }
+
+    @Test fun `edited profile throw after commit restores old profile then old credential`() = runTest {
+        val durable = FakeProfiles()
+        val credentials = FakeCredentials()
+        val vm = ProviderSettingsViewModel(durable, credentials, RecordingFactory(ValidationResult.Valid))
+        vm.save(draft(), "old-secret")
+        val profiles = AmbiguousProfiles(durable, upsertFailure = FailureMode.Throw)
+        val failingVm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid)).also { it.refresh() }
+
+        val result = failingVm.save(draft().copy(baseUrl = "https://other.example/v1"), "new-secret")
+
+        assertEquals(SettingsOperation.Failed(SettingsError.StorageUnavailable), result)
+        assertEquals("https://api.openai.com/v1", durable.items.single().baseUrl)
+        assertEquals("old-secret", credentials.values["credential-profile-1"])
+    }
+
+    @Test fun `save cancellation after commit restores profile and credential`() = runTest {
+        val durable = FakeProfiles()
+        val credentials = FakeCredentials()
+        val vm = ProviderSettingsViewModel(durable, credentials, RecordingFactory(ValidationResult.Valid))
+        vm.save(draft(), "old-secret")
+        val failingVm = ProviderSettingsViewModel(
+            AmbiguousProfiles(durable, upsertFailure = FailureMode.Cancel), credentials, RecordingFactory(ValidationResult.Valid),
+        ).also { it.refresh() }
+
+        assertFailsWith<CancellationException> {
+            failingVm.save(draft().copy(baseUrl = "https://other.example/v1"), "new-secret")
+        }
+        assertEquals("https://api.openai.com/v1", durable.items.single().baseUrl)
+        assertEquals("old-secret", credentials.values["credential-profile-1"])
+    }
+
+    @Test fun `save compensation failure reports inconsistency without leaking secret`() = runTest {
+        val durable = FakeProfiles()
+        val credentials = FakeCredentials()
+        val profiles = AmbiguousProfiles(durable, upsertFailure = FailureMode.Throw, compensationFails = true)
+        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+
+        val result = vm.save(draft(), "never-observable")
+
+        assertEquals(SettingsOperation.Failed(SettingsError.InconsistentStorage), result)
+        assertEquals(SettingsError.InconsistentStorage, vm.state.value.error)
+        assertFalse(vm.state.value.toString().contains("never-observable"))
+    }
+
+    @Test fun `selection throw after commit restores previous durable selection`() = runTest {
+        val durable = FakeProfiles().apply { selected = "previous" }
+        val vm = viewModel(durable)
+        vm.save(draft(), "secret")
+        vm.refresh()
+        val failing = ProviderSettingsViewModel(
+            AmbiguousProfiles(durable, selectFailure = FailureMode.Throw), FakeCredentials(), RecordingFactory(ValidationResult.Valid),
+        ).also { it.refresh() }
+
+        assertEquals(SettingsOperation.Failed(SettingsError.StorageUnavailable), failing.select("profile-1"))
+        assertEquals("previous", durable.selected)
+    }
+
+    @Test fun `selection cancellation after commit restores previous durable selection`() = runTest {
+        val durable = FakeProfiles().apply { selected = "previous" }
+        durable.upsert(draft().toConfiguration())
+        val failing = ProviderSettingsViewModel(
+            AmbiguousProfiles(durable, selectFailure = FailureMode.Cancel), FakeCredentials(), RecordingFactory(ValidationResult.Valid),
+        ).also { it.refresh() }
+
+        assertFailsWith<CancellationException> { failing.select("profile-1") }
+        assertEquals("previous", durable.selected)
+    }
+
+    @Test fun `operation state exposes disabled controls while busy`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val profiles = object : ProviderProfileRepository by FakeProfiles() {
+            override suspend fun list(): List<ProviderConfiguration> { gate.await(); return emptyList() }
+        }
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = ProviderSettingsViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
+            vm.refreshAsync()
+            assertFalse(vm.state.value.controlsEnabled)
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.controlsEnabled)
+        } finally { Dispatchers.resetMain() }
+    }
+
     @Test fun `repository cancellation is preserved`() = runTest {
         val profiles = object : ProviderProfileRepository {
             override suspend fun list(): List<ProviderConfiguration> = throw CancellationException("cancelled")
@@ -197,6 +294,10 @@ class ProviderSettingsViewModelTest {
         baseUrl = baseUrl, credentialAlias = "credential-profile-1", defaultModelId = "gpt-test",
         enabled = enabled, capabilities = ModelCapabilities(streaming = true, vision = true),
     )
+
+    private fun ProviderDraft.toConfiguration() = ProviderConfiguration(
+        id, type, displayName, baseUrl, credentialAlias, defaultModelId, enabled, capabilities,
+    )
 }
 
 private class FakeCredentials : CredentialStore {
@@ -214,6 +315,45 @@ private class FakeProfiles : ProviderProfileRepository {
     override suspend fun delete(id: String) { items.removeAll { it.id == id }; if (selected == id) selected = null }
     override suspend fun select(id: String?) { selected = id }
     override suspend fun selectedId() = selected
+}
+
+private enum class FailureMode { None, Throw, Cancel }
+
+private class AmbiguousProfiles(
+    private val delegate: FakeProfiles,
+    private var upsertFailure: FailureMode = FailureMode.None,
+    private var selectFailure: FailureMode = FailureMode.None,
+    private val compensationFails: Boolean = false,
+) : ProviderProfileRepository by delegate {
+    private var mutationFailed = false
+
+    override suspend fun upsert(profile: ProviderConfiguration) {
+        delegate.upsert(profile)
+        val mode = upsertFailure
+        upsertFailure = FailureMode.None
+        if (mode != FailureMode.None) {
+            mutationFailed = true
+            fail(mode)
+        }
+    }
+
+    override suspend fun delete(id: String) {
+        if (compensationFails && mutationFailed) error("compensation failed")
+        delegate.delete(id)
+    }
+
+    override suspend fun select(id: String?) {
+        delegate.select(id)
+        val mode = selectFailure
+        selectFailure = FailureMode.None
+        fail(mode)
+    }
+
+    private fun fail(mode: FailureMode) = when (mode) {
+        FailureMode.None -> Unit
+        FailureMode.Throw -> error("committed then failed")
+        FailureMode.Cancel -> throw CancellationException("committed then cancelled")
+    }
 }
 
 private class RecordingFactory(private val validation: ValidationResult) : ProviderFactory {

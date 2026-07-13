@@ -69,7 +69,10 @@ fun ProviderSettingsScreen(
             Text(stringResource(R.string.provider_presets_label), style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.presets.forEach { preset ->
-                    OutlinedButton(onClick = { onPreset(preset.kind, localizedPresetName(preset.kind)) }) { Text(presetLabel(preset.kind)) }
+                    OutlinedButton(
+                        onClick = { onPreset(preset.kind, localizedPresetName(preset.kind)) },
+                        enabled = state.controlsEnabled,
+                    ) { Text(presetLabel(preset.kind)) }
                 }
             }
         }
@@ -88,7 +91,7 @@ fun ProviderSettingsScreen(
                 )
                 if (host.isNotBlank()) Text(stringResource(R.string.provider_destination_host, host))
                 Button(
-                    enabled = !state.operationInProgress && (credential.isNotBlank() || state.profiles.any { it.configuration.id == editor.id }),
+                    enabled = state.controlsEnabled && (credential.isNotBlank() || state.profiles.any { it.configuration.id == editor.id }),
                     onClick = {
                         onSave(
                             editor.draft(),
@@ -99,6 +102,7 @@ fun ProviderSettingsScreen(
                 ) { Text(stringResource(R.string.provider_save)) }
             }
         }
+        if (state.operationInProgress) item { Text(stringResource(R.string.provider_operation_in_progress)) }
         state.error?.let { error -> item { Text(errorLabel(error), color = MaterialTheme.colorScheme.error) } }
         items(state.profiles, key = { it.configuration.id }) { profile ->
             val configuration = profile.configuration
@@ -109,30 +113,44 @@ fun ProviderSettingsScreen(
                     Text(validationLabel(profile.validationStatus))
                     val selectDescription = stringResource(R.string.provider_select_named, configuration.displayName)
                     val enabledDescription = stringResource(R.string.provider_enabled_named, configuration.displayName)
+                    val editDescription = stringResource(R.string.provider_edit_named, configuration.displayName)
+                    val deleteDescription = stringResource(R.string.provider_delete_named, configuration.displayName)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         RadioButton(
                             selected = state.selectedProfileId == configuration.id,
                             onClick = { onSelect(configuration.id) },
-                            enabled = configuration.enabled,
+                            enabled = state.controlsEnabled && configuration.enabled,
                             modifier = Modifier.semantics { contentDescription = selectDescription },
                         )
                         Text(stringResource(R.string.provider_select))
                         Switch(
                             checked = configuration.enabled,
                             onCheckedChange = { onEnabled(configuration.id, it) },
+                            enabled = state.controlsEnabled,
                             modifier = Modifier.semantics { contentDescription = enabledDescription },
                         )
                         Text(stringResource(R.string.provider_enabled_label))
                     }
                     if (URI(configuration.baseUrl).host?.isNotBlank() == true) {
                         val destinationHost = URI(configuration.baseUrl).host
-                        OutlinedButton(onClick = { onValidate(configuration.id, destinationHost) }) {
+                        OutlinedButton(
+                            onClick = { onValidate(configuration.id, destinationHost) },
+                            enabled = state.controlsEnabled,
+                        ) {
                             Text(stringResource(R.string.provider_test_host, destinationHost))
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { onEdit(configuration.id); credential = "" }) { Text(stringResource(R.string.provider_edit)) }
-                        TextButton(onClick = { onDelete(configuration.id) }) { Text(stringResource(R.string.provider_delete)) }
+                        TextButton(
+                            onClick = { onEdit(configuration.id); credential = "" },
+                            enabled = state.controlsEnabled,
+                            modifier = Modifier.semantics { contentDescription = editDescription },
+                        ) { Text(stringResource(R.string.provider_edit)) }
+                        TextButton(
+                            onClick = { onDelete(configuration.id) },
+                            enabled = state.controlsEnabled,
+                            modifier = Modifier.semantics { contentDescription = deleteDescription },
+                        ) { Text(stringResource(R.string.provider_delete)) }
                     }
                 }
             }

@@ -48,7 +48,7 @@ Result: exit code 0.
 
 - `RedactorTest`: 2 tests, 0 failures, 0 errors.
 - `EncryptedCredentialStoreTest`: 4 tests, 0 failures, 0 errors.
-- `ProviderSettingsViewModelTest`: 12 tests, 0 failures, 0 errors.
+- `ProviderSettingsViewModelTest`: 19 tests, 0 failures, 0 errors.
 - `:feature-settings:lintDebug`: passed.
 - `git diff --check`: passed (line-ending conversion warnings only).
 - Production source scan found no API-key-shaped strings, Authorization/Bearer values, or cleartext `http://` endpoints.
@@ -56,3 +56,13 @@ Result: exit code 0.
 ## Remaining limitation
 
 The required Task 6 gate is JVM unit tests plus lint. AES-GCM and record-storage semantics are directly tested, but the platform `AndroidKeyStore` provider and `KeyGenParameterSpec` instantiation still require an API 36 device or emulator instrumentation suite. The Android implementation compiles against API 36.1.
+
+## Main-review transaction and accessibility fixes
+
+Focused tests were added before the follow-up implementation. After adding the requested control-state API, the RED run executed 19 settings tests and failed six for the expected missing behaviors: create/edit save rollback after an ambiguous commit, cancellation-after-commit rollback, compensation-failure classification, and selection rollback after throw/cancellation. The subsequent focused GREEN run passed.
+
+The save transaction now captures both the durable prior profile and credential before mutation. Compensation runs under `NonCancellable`, restores or deletes the profile first, and only then restores the credential, preventing an old credential from being paired with a changed destination host. Failed compensation remains typed as `InconsistentStorage` and exposes no credential in UI state. Selection similarly captures and restores the prior durable selected ID after ambiguous failure or cancellation.
+
+All provider mutation controls bind to `controlsEnabled`; while an operation is active, save, test, select, enable, delete, edit, and preset controls are disabled and progress is communicated in text. Edit/delete controls use localized provider-specific content descriptions. English and Simplified Chinese resources are included.
+
+The first clean follow-up gate passed tests but lint failed with 28 `MissingTranslation` errors because only the two newly requested Chinese accessibility strings were initially localized. The complete `zh-rCN` settings string set was then supplied. The second clean combined test/lint gate completed with exit code 0.

@@ -1,0 +1,32 @@
+<resources>
+    <string name="provider_settings_title">模型服务商</string>
+    <string name="provider_presets_label">服务商预设</string>
+    <string name="provider_preset_openai">OpenAI</string>
+    <string name="provider_preset_deepseek">DeepSeek</string>
+    <string name="provider_preset_custom">自定义 HTTPS</string>
+    <string name="provider_name_label">服务商名称</string>
+    <string name="provider_url_label">HTTPS 基础网址</string>
+    <string name="provider_model_label">模型 ID</string>
+    <string name="provider_api_key_label">API 密钥</string>
+    <string name="provider_enabled_label">已启用</string>
+    <string name="provider_save">保存服务商</string>
+    <string name="provider_edit">编辑</string>
+    <string name="provider_delete">删除</string>
+    <string name="provider_edit_named">编辑%1$s</string>
+    <string name="provider_delete_named">删除%1$s</string>
+    <string name="provider_select">选择服务商</string>
+    <string name="provider_select_named">选择%1$s作为服务商</string>
+    <string name="provider_enabled_named">启用%1$s</string>
+    <string name="provider_test_host">确认 %1$s 并测试连接</string>
+    <string name="provider_destination_host">凭据将发送至 %1$s</string>
+    <string name="provider_validation_not_tested">尚未测试</string>
+    <string name="provider_validation_testing">正在测试</string>
+    <string name="provider_validation_valid">连接有效</string>
+    <string name="provider_validation_invalid">连接失败</string>
+    <string name="provider_error_invalid_endpoint">请输入有效的 HTTPS 端点、名称、模型和凭据。</string>
+    <string name="provider_error_credential">凭据存储不可用。</string>
+    <string name="provider_error_storage">服务商存储不可用。</string>
+    <string name="provider_error_inconsistent_storage">无法恢复服务商存储。使用前请删除或重新输入此服务商的凭据。</string>
+    <string name="provider_error_validation">连接验证失败。</string>
+    <string name="provider_operation_in_progress">正在执行服务商操作</string>
+</resources>

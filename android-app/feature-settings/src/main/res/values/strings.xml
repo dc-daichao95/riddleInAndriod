@@ -12,6 +12,8 @@
     <string name="provider_save">Save provider</string>
     <string name="provider_edit">Edit</string>
     <string name="provider_delete">Delete</string>
+    <string name="provider_edit_named">Edit %1$s</string>
+    <string name="provider_delete_named">Delete %1$s</string>
     <string name="provider_select">Select provider</string>
     <string name="provider_select_named">Select %1$s as provider</string>
     <string name="provider_enabled_named">Enable %1$s</string>
@@ -26,4 +28,5 @@
     <string name="provider_error_storage">Provider storage is unavailable.</string>
     <string name="provider_error_inconsistent_storage">Provider storage could not be restored. Delete or re-enter this provider credential before use.</string>
     <string name="provider_error_validation">Connection validation failed.</string>
+    <string name="provider_operation_in_progress">Provider operation in progress</string>
 </resources>
