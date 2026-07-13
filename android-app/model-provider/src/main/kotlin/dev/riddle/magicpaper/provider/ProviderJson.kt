@@ -4,7 +4,11 @@ import dev.riddle.magicpaper.model.*
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal object ProviderJson {
+object ProviderJson {
+    class ToolState {
+        internal data class Partial(var id: String? = null, var name: String = "", val arguments: StringBuilder = StringBuilder(), var completed: Boolean = false)
+        internal val calls = mutableMapOf<Int, Partial>()
+    }
     fun request(request: ModelRequest): String = JSONObject().apply {
         put("model", request.modelId); put("stream", true); put("stream_options", JSONObject().put("include_usage", true))
         put("messages", JSONArray(request.messages.map { JSONObject().put("role", it.role.name.lowercase()).put("content", it.text) }))
@@ -15,7 +19,7 @@ internal object ProviderJson {
         }))
     }.toString()
 
-    fun events(payload: String): List<ModelEvent> {
+    fun events(payload: String, includeReasoning: Boolean = false, toolState: ToolState = ToolState()): List<ModelEvent> {
         val root = try { JSONObject(payload) } catch (error: Exception) { throw ProviderParseException("Malformed provider JSON", error) }
         val result = mutableListOf<ModelEvent>()
         try {
@@ -25,10 +29,25 @@ internal object ProviderJson {
                 val choice = choices.getJSONObject(index)
                 val delta = choice.optJSONObject("delta") ?: JSONObject()
                 delta.optString("content").takeIf { it.isNotEmpty() }?.let { result += ModelEvent.TextDelta(it) }
-                delta.optString("reasoning_content").takeIf { it.isNotEmpty() }?.let { result += ModelEvent.ReasoningDelta(it) }
+                if (includeReasoning) delta.optString("reasoning_content").takeIf { it.isNotEmpty() }?.let { result += ModelEvent.ReasoningDelta(it) }
                 // Tool calls are deliberately parsed as untrusted protocol data, but this layer never executes them.
-                delta.optJSONArray("tool_calls")?.let { calls -> repeat(calls.length()) { calls.getJSONObject(it) } }
+                delta.optJSONArray("tool_calls")?.let { calls -> repeat(calls.length()) { callIndex ->
+                    val call = calls.getJSONObject(callIndex)
+                    val index = call.optInt("index", callIndex)
+                    val partial = toolState.calls.getOrPut(index) { ToolState.Partial() }
+                    call.optString("id").takeIf { it.isNotEmpty() }?.let { partial.id = it }
+                    val id = partial.id ?: "index-$index"
+                    val function = call.optJSONObject("function") ?: JSONObject()
+                    val name = function.optString("name")
+                    val arguments = function.optString("arguments")
+                    if (name.isNotEmpty()) { partial.name += name; result += ModelEvent.ToolCallStarted(id, partial.name) }
+                    if (arguments.isNotEmpty()) { partial.arguments.append(arguments); result += ModelEvent.ToolCallArgumentsDelta(id, arguments) }
+                } }
                 if (!choice.isNull("finish_reason")) completion = ModelEvent.Completed(finishReason(choice.getString("finish_reason")))
+            }
+            if (completion != null) toolState.calls.values.filter { !it.completed && it.id != null && it.name.isNotEmpty() }.forEach { partial ->
+                partial.completed = true
+                result += ModelEvent.ToolCallCompleted(ToolCall(requireNotNull(partial.id), partial.name, partial.arguments.toString()))
             }
             root.optJSONObject("usage")?.let { usage -> result += ModelEvent.UsageUpdated(TokenUsage(usage.optLong("prompt_tokens"), usage.optLong("completion_tokens"))) }
             completion?.let { result += it }

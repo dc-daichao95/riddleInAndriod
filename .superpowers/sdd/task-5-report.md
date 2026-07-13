@@ -33,3 +33,27 @@ Result: `BUILD SUCCESSFUL` (75 tasks; 29 executed, 46 up-to-date).
 
 - No live-provider calls were made; fixtures and fake transports are deterministic.
 - Credential persistence is intentionally deferred to the security/settings task; this module consumes only the credential lookup port.
+
+## Review corrections
+
+The review follow-up moved raw credential resolution entirely into `OkHttpModelTransport`; provider requests now carry only a credential alias. Concrete MockWebServer tests cover authorization injection, bounded/redacted error bodies, and `Call.cancel()` on collector cancellation.
+
+Additional RED/GREEN coverage now verifies:
+
+- DeepSeek-only reasoning capability and `reasoning_content` mapping;
+- meaningful `GET /models` and content-free minimal validation against the candidate profile host;
+- immediate `[DONE]` upstream termination and exactly one completion;
+- normalized tool-call identity, name, argument fragments, and completion without execution;
+- finite connect/read/write/total timeouts;
+- delta-seconds and RFC HTTP-date `Retry-After` parsing with an injected clock and typed retry eligibility;
+- SSE `id` and persistent `retry` field semantics;
+- malformed/bounded provider errors with credential redaction;
+- committed SSE fixtures consumed by contract tests.
+
+Fresh clean review gate:
+
+```powershell
+./gradlew :model-provider:clean :model-provider:test :model-provider:lintDebug
+```
+
+Result: `BUILD SUCCESSFUL` (76 tasks; 37 executed, 39 up-to-date).

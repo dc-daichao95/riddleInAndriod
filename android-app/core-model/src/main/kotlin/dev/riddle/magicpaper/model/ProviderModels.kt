@@ -89,6 +89,8 @@ data class TokenUsage(
     val outputTokens: Long,
 )
 
+data class ToolCall(val id: String, val name: String, val argumentsJson: String)
+
 enum class FinishReason {
     STOP,
     LENGTH,
@@ -110,6 +112,9 @@ sealed interface ModelEvent {
     data class TextDelta(val text: String) : ModelEvent
     data class ReasoningDelta(val text: String) : ModelEvent
     data class UsageUpdated(val usage: TokenUsage) : ModelEvent
+    data class ToolCallStarted(val id: String, val name: String) : ModelEvent
+    data class ToolCallArgumentsDelta(val id: String, val json: String) : ModelEvent
+    data class ToolCallCompleted(val call: ToolCall) : ModelEvent
     data class Completed(val reason: FinishReason) : ModelEvent
     data class Failed(val error: ModelError) : ModelEvent
 }

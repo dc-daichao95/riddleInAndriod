@@ -19,4 +19,27 @@ class SseParserTest {
         parser.feed("data: incomplete".encodeToByteArray())
         assertEquals(listOf(SseEvent.Truncated), parser.finish())
     }
+
+    @Test fun `id and retry fields apply to the dispatched event`() {
+        val parser = SseParser()
+        assertEquals(
+            listOf(SseEvent.Data("hello", id = "42", retryMillis = 1500)),
+            parser.feed("id: 42\nretry: 1500\ndata: hello\n\n".encodeToByteArray()),
+        )
+    }
+
+    @Test fun `retry reconnection value persists across dispatched events`() {
+        val parser = SseParser()
+        assertEquals(
+            listOf(SseEvent.Data("one", retryMillis = 1500), SseEvent.Data("two", retryMillis = 1500)),
+            parser.feed("retry: 1500\ndata: one\n\ndata: two\n\n".encodeToByteArray()),
+        )
+    }
+
+    @Test fun `done terminates parser and ignores later bytes`() {
+        val parser = SseParser()
+        val events = parser.feed("data: [DONE]\n\ndata: later\n\n".encodeToByteArray())
+        assertEquals(listOf(SseEvent.Done), events)
+        assertEquals(emptyList(), parser.finish())
+    }
 }
