@@ -1,0 +1,29 @@
+<resources>
+    <string name="provider_settings_title">Model providers</string>
+    <string name="provider_presets_label">Provider presets</string>
+    <string name="provider_preset_openai">OpenAI</string>
+    <string name="provider_preset_deepseek">DeepSeek</string>
+    <string name="provider_preset_custom">Custom HTTPS</string>
+    <string name="provider_name_label">Provider name</string>
+    <string name="provider_url_label">HTTPS base URL</string>
+    <string name="provider_model_label">Model ID</string>
+    <string name="provider_api_key_label">API key</string>
+    <string name="provider_enabled_label">Enabled</string>
+    <string name="provider_save">Save provider</string>
+    <string name="provider_edit">Edit</string>
+    <string name="provider_delete">Delete</string>
+    <string name="provider_select">Select provider</string>
+    <string name="provider_select_named">Select %1$s as provider</string>
+    <string name="provider_enabled_named">Enable %1$s</string>
+    <string name="provider_test_host">Confirm %1$s and test connection</string>
+    <string name="provider_destination_host">Credentials will be sent to %1$s</string>
+    <string name="provider_validation_not_tested">Not tested</string>
+    <string name="provider_validation_testing">Testing</string>
+    <string name="provider_validation_valid">Connection valid</string>
+    <string name="provider_validation_invalid">Connection failed</string>
+    <string name="provider_error_invalid_endpoint">Enter a valid HTTPS endpoint, name, model, and credential.</string>
+    <string name="provider_error_credential">Credential storage is unavailable.</string>
+    <string name="provider_error_storage">Provider storage is unavailable.</string>
+    <string name="provider_error_inconsistent_storage">Provider storage could not be restored. Delete or re-enter this provider credential before use.</string>
+    <string name="provider_error_validation">Connection validation failed.</string>
+</resources>

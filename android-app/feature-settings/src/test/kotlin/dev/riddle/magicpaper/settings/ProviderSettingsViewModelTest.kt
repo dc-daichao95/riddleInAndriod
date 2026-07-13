@@ -1,0 +1,234 @@
+package dev.riddle.magicpaper.settings
+
+import dev.riddle.magicpaper.model.*
+import dev.riddle.magicpaper.security.CredentialError
+import dev.riddle.magicpaper.security.CredentialResult
+import dev.riddle.magicpaper.security.CredentialStore
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.setMain
+import kotlin.test.*
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class ProviderSettingsViewModelTest {
+    @Test fun `repository cancellation is preserved`() = runTest {
+        val profiles = object : ProviderProfileRepository {
+            override suspend fun list(): List<ProviderConfiguration> = throw CancellationException("cancelled")
+            override suspend fun upsert(profile: ProviderConfiguration) = Unit
+            override suspend fun delete(id: String) = Unit
+            override suspend fun select(id: String?) = Unit
+            override suspend fun selectedId(): String? = null
+        }
+        val vm = ProviderSettingsViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
+
+        assertFailsWith<CancellationException> { vm.refresh() }
+    }
+
+    @Test fun `save cancellation restores previous credential`() = runTest {
+        val credentials = FakeCredentials().apply { values["credential-profile-1"] = "old" }
+        val profiles = object : ProviderProfileRepository by FakeProfiles() {
+            override suspend fun upsert(profile: ProviderConfiguration) = throw CancellationException("cancelled")
+        }
+        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+
+        assertFailsWith<CancellationException> { vm.save(draft(), "new") }
+        assertEquals("old", credentials.values["credential-profile-1"])
+    }
+
+    @Test fun `delete cancellation restores profile credential and selection`() = runTest {
+        val credentials = FakeCredentials()
+        val delegate = FakeProfiles()
+        val profiles = object : ProviderProfileRepository by delegate {
+            override suspend fun delete(id: String) = throw CancellationException("cancelled")
+        }
+        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+        vm.save(draft(), "secret")
+        vm.select("profile-1")
+
+        assertFailsWith<CancellationException> { vm.delete("profile-1") }
+        assertEquals("secret", credentials.values["credential-profile-1"])
+        assertEquals("profile-1", delegate.selected)
+        assertEquals(1, delegate.items.size)
+    }
+
+    @Test fun `disable failure restores enabled selected profile`() = runTest {
+        val credentials = FakeCredentials()
+        val delegate = FakeProfiles()
+        val profiles = object : ProviderProfileRepository by delegate {
+            override suspend fun select(id: String?) {
+                if (id == null) error("selection unavailable") else delegate.select(id)
+            }
+        }
+        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+        vm.save(draft(), "secret")
+        vm.select("profile-1")
+
+        assertIs<SettingsOperation.Failed>(vm.setEnabled("profile-1", false))
+        assertTrue(vm.state.value.profiles.single().configuration.enabled)
+        assertEquals("profile-1", vm.state.value.selectedProfileId)
+    }
+
+    @Test fun `async operation rejects concurrent mutation`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var selectCalls = 0
+        val profiles = object : ProviderProfileRepository {
+            override suspend fun list(): List<ProviderConfiguration> { gate.await(); return emptyList() }
+            override suspend fun upsert(profile: ProviderConfiguration) = Unit
+            override suspend fun delete(id: String) = Unit
+            override suspend fun select(id: String?) { selectCalls++ }
+            override suspend fun selectedId(): String? = null
+        }
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = ProviderSettingsViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
+            vm.refreshAsync()
+            vm.selectAsync(null)
+            runCurrent()
+            assertTrue(vm.state.value.operationInProgress)
+            assertEquals(0, selectCalls)
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertFalse(vm.state.value.operationInProgress)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test fun `saving keeps raw secret out of observable state and profile`() = runTest {
+        val credentials = FakeCredentials()
+        val profiles = FakeProfiles()
+        val vm = viewModel(profiles, credentials)
+
+        vm.save(draft(), "sk-test-secret")
+
+        assertEquals("sk-test-secret", credentials.values["credential-profile-1"])
+        assertFalse(vm.state.value.toString().contains("sk-test-secret"))
+        assertFalse(profiles.items.single().toString().contains("sk-test-secret"))
+    }
+
+    @Test fun `editing metadata without replacement secret preserves credential`() = runTest {
+        val credentials = FakeCredentials()
+        val vm = viewModel(credentials = credentials)
+        vm.save(draft(), "original-secret")
+
+        vm.save(draft().copy(displayName = "Renamed"), "")
+
+        assertEquals("original-secret", credentials.values["credential-profile-1"])
+        assertEquals("Renamed", vm.state.value.profiles.single().configuration.displayName)
+    }
+
+    @Test fun `validation uses minimal provider request without page image`() = runTest {
+        val factory = RecordingFactory(ValidationResult.Valid)
+        val vm = viewModel(factory = factory)
+        vm.save(draft(), "secret")
+
+        vm.validate("profile-1", confirmedHost = "api.openai.com")
+
+        assertEquals("api.openai.com", java.net.URI(factory.created.single().baseUrl).host)
+        assertEquals(factory.created.single(), factory.validationInputs.single())
+        assertEquals(ValidationStatus.Valid, vm.state.value.profiles.single().validationStatus)
+    }
+
+    @Test fun `cleartext URL is rejected before credentials or transport`() = runTest {
+        val credentials = FakeCredentials()
+        val factory = RecordingFactory(ValidationResult.Valid)
+        val vm = viewModel(credentials = credentials, factory = factory)
+
+        val result = vm.save(draft(baseUrl = "http://api.example.com/v1"), "secret")
+
+        assertIs<SettingsOperation.InvalidEndpoint>(result)
+        assertTrue(credentials.values.isEmpty())
+        assertTrue(factory.created.isEmpty())
+    }
+
+    @Test fun `deleting removes profile and its credential alias`() = runTest {
+        val credentials = FakeCredentials()
+        val profiles = FakeProfiles()
+        val vm = viewModel(profiles, credentials)
+        vm.save(draft(), "secret")
+        vm.select("profile-1")
+
+        assertEquals(SettingsOperation.Success, vm.delete("profile-1"))
+        assertTrue(profiles.items.isEmpty())
+        assertNull(profiles.selected)
+        assertFalse(credentials.values.containsKey("credential-profile-1"))
+    }
+
+    @Test fun `validation requires confirmation of actual destination host`() = runTest {
+        val factory = RecordingFactory(ValidationResult.Valid)
+        val vm = viewModel(factory = factory)
+        vm.save(draft(), "secret")
+
+        val result = vm.validate("profile-1", confirmedHost = "lookalike.example")
+
+        assertIs<SettingsOperation.HostConfirmationRequired>(result)
+        assertEquals("api.openai.com", result.host)
+        assertTrue(factory.created.isEmpty())
+    }
+
+    @Test fun `presets select enable and edit provider-neutral profiles`() = runTest {
+        val vm = viewModel()
+        assertEquals(PresetKind.entries.toSet(), vm.state.value.presets.map { it.kind }.toSet())
+        vm.save(draft(enabled = false), "secret")
+
+        vm.setEnabled("profile-1", true)
+        vm.select("profile-1")
+
+        assertTrue(vm.state.value.profiles.single().configuration.enabled)
+        assertEquals("profile-1", vm.state.value.selectedProfileId)
+    }
+
+    private fun viewModel(
+        profiles: FakeProfiles = FakeProfiles(), credentials: FakeCredentials = FakeCredentials(),
+        factory: RecordingFactory = RecordingFactory(ValidationResult.Valid),
+    ) = ProviderSettingsViewModel(profiles, credentials, factory)
+
+    private fun draft(baseUrl: String = "https://api.openai.com/v1", enabled: Boolean = true) = ProviderDraft(
+        id = "profile-1", type = ProviderType.OPENAI_COMPATIBLE, displayName = "My OpenAI",
+        baseUrl = baseUrl, credentialAlias = "credential-profile-1", defaultModelId = "gpt-test",
+        enabled = enabled, capabilities = ModelCapabilities(streaming = true, vision = true),
+    )
+}
+
+private class FakeCredentials : CredentialStore {
+    val values = mutableMapOf<String, String>()
+    override suspend fun put(alias: String, secret: String): CredentialResult<Unit> { values[alias] = secret; return CredentialResult.Success(Unit) }
+    override suspend fun read(alias: String): CredentialResult<String> = values[alias]?.let { CredentialResult.Success(it) } ?: CredentialResult.Failure(CredentialError.Unavailable)
+    override suspend fun delete(alias: String): CredentialResult<Unit> { values.remove(alias); return CredentialResult.Success(Unit) }
+}
+
+private class FakeProfiles : ProviderProfileRepository {
+    val items = mutableListOf<ProviderConfiguration>()
+    var selected: String? = null
+    override suspend fun list() = items.toList()
+    override suspend fun upsert(profile: ProviderConfiguration) { items.removeAll { it.id == profile.id }; items += profile }
+    override suspend fun delete(id: String) { items.removeAll { it.id == id }; if (selected == id) selected = null }
+    override suspend fun select(id: String?) { selected = id }
+    override suspend fun selectedId() = selected
+}
+
+private class RecordingFactory(private val validation: ValidationResult) : ProviderFactory {
+    val created = mutableListOf<ProviderConfiguration>()
+    val validationInputs = mutableListOf<ProviderConfiguration>()
+    override fun create(configuration: ProviderConfiguration): ModelProvider {
+        created += configuration
+        return object : ModelProvider {
+            override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
+            override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
+            override suspend fun listModels() = Result.success(emptyList<ModelDescriptor>())
+            override suspend fun validate(configuration: ProviderConfiguration): ValidationResult {
+                validationInputs += configuration
+                return validation
+            }
+        }
+    }
+}
