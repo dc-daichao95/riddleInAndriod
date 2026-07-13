@@ -17,7 +17,16 @@ class ConversationStateMachineTest {
         assertTrue(machine.transition(listening, ConversationInput.Tick(3_799)).effects.isEmpty())
 
         val committed = machine.transition(listening, ConversationInput.Tick(3_800))
-        assertEquals(listOf(ConversationEffect.BeginTurn("page-1")), committed.effects)
+        assertEquals(
+            listOf(
+                ConversationEffect.BeginTurn("page-1"),
+                ConversationEffect.Rasterize("page-1"),
+                ConversationEffect.RecognizeText("page-1"),
+                ConversationEffect.RequestProvider("page-1"),
+                ConversationEffect.RenderInkDissolve("page-1"),
+            ),
+            committed.effects,
+        )
         assertIs<ConversationState.Drinking>(committed.state)
         assertTrue(machine.transition(committed.state, ConversationInput.Tick(9_000)).effects.isEmpty())
     }
@@ -28,15 +37,12 @@ class ConversationStateMachineTest {
         assertEquals(state, machine.transition(state, ConversationInput.Tick(10_000)).state)
     }
 
-    @Test fun `beginning a turn starts rasterization and dissolve concurrently`() {
+    @Test fun `turn started acknowledgement only advances to thinking because pipeline began at commit`() {
         val result = machine.transition(
             ConversationState.Drinking(page, turnStartedAtMillis = 3_800),
             ConversationInput.TurnStarted,
         )
-        assertEquals(
-            listOf(ConversationEffect.Rasterize("page-1"), ConversationEffect.RenderInkDissolve("page-1")),
-            result.effects,
-        )
+        assertTrue(result.effects.isEmpty())
         assertIs<ConversationState.Thinking>(result.state)
     }
 
@@ -83,5 +89,27 @@ class ConversationStateMachineTest {
         assertIs<ConversationState.Listening>(result.state)
         assertEquals(listOf(ConversationEffect.CancelActiveTurn), result.effects)
         assertTrue(result.effects.none { it is ConversationEffect.PersistCompletedTurn })
+        val listening = assertIs<ConversationState.Listening>(result.state)
+        assertTrue(!listening.page.hasVisibleInk)
+        assertTrue(machine.transition(listening, ConversationInput.Tick(Long.MAX_VALUE)).effects.isEmpty())
+    }
+
+    @Test fun `ink change updates blank listening page and starts exactly one turn at its deadline`() {
+        val blank = ConversationState.Listening(page.copy(hasVisibleInk = false), 0)
+        val inked = machine.transition(blank, ConversationInput.InkChanged(1_000, true))
+        val listening = assertIs<ConversationState.Listening>(inked.state)
+        assertTrue(listening.page.hasVisibleInk)
+        assertEquals(1_000, listening.lastPointAtMillis)
+        assertTrue(machine.transition(listening, ConversationInput.Tick(3_799)).effects.isEmpty())
+        val committed = machine.transition(listening, ConversationInput.Tick(3_800))
+        assertEquals(1, committed.effects.count { it is ConversationEffect.BeginTurn })
+        assertTrue(machine.transition(committed.state, ConversationInput.Tick(6_600)).effects.isEmpty())
+    }
+
+    @Test fun `backward and overflowing ticks do not commit`() {
+        val ordinary = ConversationState.Listening(page, 10_000)
+        assertEquals(ordinary, machine.transition(ordinary, ConversationInput.Tick(9_999)).state)
+        val extreme = ConversationState.Listening(page, Long.MAX_VALUE - 1_000)
+        assertTrue(machine.transition(extreme, ConversationInput.Tick(Long.MAX_VALUE)).effects.isEmpty())
     }
 }

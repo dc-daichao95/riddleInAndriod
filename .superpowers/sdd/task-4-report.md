@@ -49,3 +49,31 @@ Observed result: exit 0. XML results report 11 tests, 0 failures, 0 errors, 0 sk
 - Rasterization, OCR, persistence, transport adapters, UI, tools, paid calls, Room, and credentials are outside this slice. Effects mark boundaries; later tasks provide their production executors.
 - Gradle wrapper/dependency acquisition required approved network execution outside the filesystem sandbox. No version was changed to work around it.
 - Existing Task 3 report edits and generated build directories were preserved and excluded from this commit.
+
+## Review-fix cycle
+
+The first review identified missing explicit provider-pipeline effects, incomplete listening ink handling, unsafe post-cancel recommit behavior, an under-specified fake Provider contract, and overflow-sensitive tick arithmetic.
+
+### Review RED
+
+Added tests before production changes for:
+
+- exact commit-boundary effect ordering: begin turn, rasterize, abstract text recognition, Provider request, and concurrent ink dissolve;
+- blank listening page through `InkChanged`, pre-deadline tick, exact deadline, and exactly-once transition;
+- cancellation clearing committed ink and preventing a later tick from recommitting;
+- backward and near-`Long.MAX_VALUE` ticks;
+- fake descriptor/model/validation behavior;
+- rejection of disabled, provider-type-mismatched, and non-streaming profiles;
+- request-aware cold stream creation, independent collections, and recorded request trace.
+
+Command: `./gradlew :conversation:test --no-daemon`
+
+Observed expected compilation failure for missing `RecognizeText`, `RequestProvider`, request-aware fake factory, and request trace.
+
+### Review GREEN and clean verification
+
+Focused command: `./gradlew :conversation:test --no-daemon` — exit 0.
+
+Full command: `./gradlew :conversation:clean :conversation:test --no-daemon` — `BUILD SUCCESSFUL`; 16 tests, 0 failures, 0 errors, 0 skipped.
+
+The reducer still performs no I/O and reads no clock. Deadline comparison rejects backward ticks and avoids subtract/add overflow. OCR and provider routing remain abstract effects; no Task 7 implementation was introduced.
