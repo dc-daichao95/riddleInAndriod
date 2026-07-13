@@ -1,0 +1,12 @@
+<resources>
+    <string name="paper_ready">Paper ready</string>
+    <string name="paper_dissolving">Ink dissolving</string>
+    <string name="paper_thinking">Thinking</string>
+    <string name="paper_reply_appearing">Reply appearing</string>
+    <string name="paper_interrupted">Previous reply was interrupted</string>
+    <string name="paper_failed">Reply failed</string>
+    <string name="paper_cancel">Cancel</string>
+    <string name="paper_help_title">Magic paper</string>
+    <string name="paper_help_body">Write anywhere. Pause to send. Hold three fingers to open settings.</string>
+    <string name="paper_help_close">Return to paper</string>
+</resources>

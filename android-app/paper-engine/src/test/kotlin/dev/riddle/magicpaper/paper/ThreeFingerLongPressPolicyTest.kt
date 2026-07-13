@@ -15,6 +15,15 @@ class ThreeFingerLongPressPolicyTest {
     }
 
     @Test
+    fun `normal one then two then three finger contact sequence can open settings`() {
+        val policy = ThreeFingerLongPressPolicy()
+        assertNull(policy.onTouchFrame(frame(1), 0))
+        assertNull(policy.onTouchFrame(frame(2), 10))
+        assertNull(policy.onTouchFrame(frame(3), 20))
+        assertEquals(SettingsEntryEvent.OpenSettings, policy.onTouchFrame(frame(3), 2_020))
+    }
+
+    @Test
     fun `movement cancels hidden gesture`() {
         val policy = ThreeFingerLongPressPolicy()
         policy.onTouchFrame(frame(3), 0)

@@ -48,11 +48,16 @@ class ThreeFingerLongPressPolicy(
         }
         if (blockedUntilRelease || emitted) return null
 
-        if (frame.contacts.size != REQUIRED_CONTACTS ||
+        if (frame.contacts.size > REQUIRED_CONTACTS ||
             frame.contacts.any { it.tool != PointerTool.FINGER } ||
-            frame.contacts.map { it.id }.toSet().size != REQUIRED_CONTACTS
+            frame.contacts.map { it.id }.toSet().size != frame.contacts.size
         ) {
             blockedUntilRelease = true
+            return null
+        }
+        if (frame.contacts.size < REQUIRED_CONTACTS) {
+            startedAtMillis = null
+            initialPositions = emptyMap()
             return null
         }
 
