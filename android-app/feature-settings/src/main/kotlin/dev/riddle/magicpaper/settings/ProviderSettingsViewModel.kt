@@ -91,6 +91,7 @@ class ProviderSettingsViewModel(
     private val profiles: ProviderProfileRepository,
     private val credentials: CredentialStore,
     private val providerFactory: ProviderFactory,
+    private val credentialTransactions: CredentialTransactionCoordinator,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(ProviderSettingsUiState())
     val state: StateFlow<ProviderSettingsUiState> = mutableState.asStateFlow()
@@ -161,31 +162,18 @@ class ProviderSettingsViewModel(
             return fail(SettingsError.InvalidEndpoint, SettingsOperation.InvalidEndpoint())
         }
 
-        val previousProfile = try {
-            profiles.list().firstOrNull { it.id == profile.id }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            return fail(SettingsError.StorageUnavailable)
-        }
-        val oldCredential = credentials.read(profile.credentialAlias)
-        val isMetadataOnlyEdit = secret.isBlank() && oldCredential is CredentialResult.Success
-        if (!isMetadataOnlyEdit && credentials.put(profile.credentialAlias, secret) !is CredentialResult.Success) {
-            return fail(SettingsError.CredentialUnavailable)
-        }
-        return try {
-            profiles.upsert(profile)
-            replaceProfile(profile)
-            SettingsOperation.Success
-        } catch (cancelled: CancellationException) {
-            withContext(NonCancellable) {
-                val restored = restoreSaveTransaction(profile, previousProfile, oldCredential)
-                if (!restored) mutableState.value = mutableState.value.copy(error = SettingsError.InconsistentStorage)
+        return when (val transaction = credentialTransactions.saveProfile(
+            profile,
+            secret,
+            selectionRequested = false,
+        )) {
+            is CredentialTransactionResult.Success -> {
+                replaceProfile(transaction.value)
+                SettingsOperation.Success
             }
-            throw cancelled
-        } catch (_: Exception) {
-            val restored = withContext(NonCancellable) { restoreSaveTransaction(profile, previousProfile, oldCredential) }
-            fail(if (restored) SettingsError.StorageUnavailable else SettingsError.InconsistentStorage)
+            CredentialTransactionResult.CredentialUnavailable -> fail(SettingsError.CredentialUnavailable)
+            CredentialTransactionResult.StorageUnavailable -> fail(SettingsError.StorageUnavailable)
+            CredentialTransactionResult.InconsistentStorage -> fail(SettingsError.InconsistentStorage)
         }
     }
 
@@ -356,23 +344,6 @@ class ProviderSettingsViewModel(
     private suspend fun restoreCredential(alias: String, previous: CredentialResult<String>): Boolean = when (previous) {
         is CredentialResult.Success -> credentials.put(alias, previous.value) is CredentialResult.Success
         is CredentialResult.Failure -> credentials.delete(alias) is CredentialResult.Success
-    }
-
-    private suspend fun restoreSaveTransaction(
-        attempted: ProviderConfiguration,
-        previous: ProviderConfiguration?,
-        previousCredential: CredentialResult<String>,
-    ): Boolean {
-        val profileRestored = try {
-            if (previous == null) profiles.delete(attempted.id) else profiles.upsert(previous)
-            true
-        } catch (cancelled: CancellationException) {
-            false
-        } catch (_: Exception) {
-            false
-        }
-        // Never restore an old credential until the old destination metadata is durable again.
-        return profileRestored && restoreCredential(attempted.credentialAlias, previousCredential)
     }
 
     private suspend fun restoreSelection(previousId: String?): Boolean = try {

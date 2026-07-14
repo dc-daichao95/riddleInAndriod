@@ -4,6 +4,8 @@ import dev.riddle.magicpaper.model.*
 import dev.riddle.magicpaper.security.CredentialError
 import dev.riddle.magicpaper.security.CredentialResult
 import dev.riddle.magicpaper.security.CredentialStore
+import dev.riddle.magicpaper.security.CredentialTransactionJournal
+import dev.riddle.magicpaper.security.CredentialTransactionJournalStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -20,60 +22,67 @@ import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProviderSettingsViewModelTest {
-    @Test fun `new profile throw after commit removes profile before credential rollback`() = runTest {
+    @Test fun `new profile throw after durable commit preserves candidate for restart recovery`() = runTest {
         val durable = FakeProfiles()
         val profiles = AmbiguousProfiles(durable, upsertFailure = FailureMode.Throw)
         val credentials = FakeCredentials()
-        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
 
         val result = vm.save(draft(), "new-secret")
 
         assertEquals(SettingsOperation.Failed(SettingsError.StorageUnavailable), result)
-        assertTrue(durable.items.isEmpty())
-        assertTrue(credentials.values.isEmpty())
+        val committed = durable.items.single()
+        assertTrue(committed.credentialAlias.startsWith("candidate-profile-1-"))
+        assertEquals("new-secret", credentials.values[committed.credentialAlias])
     }
 
-    @Test fun `edited profile throw after commit restores old profile then old credential`() = runTest {
+    @Test fun `edited profile throw after durable commit immediately finishes recovery`() = runTest {
         val durable = FakeProfiles()
         val credentials = FakeCredentials()
-        val vm = ProviderSettingsViewModel(durable, credentials, RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(durable, credentials, RecordingFactory(ValidationResult.Valid))
         vm.save(draft(), "old-secret")
+        val priorAlias = durable.items.single().credentialAlias
         val profiles = AmbiguousProfiles(durable, upsertFailure = FailureMode.Throw)
-        val failingVm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid)).also { it.refresh() }
+        val failingVm = testViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid)).also { it.refresh() }
 
         val result = failingVm.save(draft().copy(baseUrl = "https://other.example/v1"), "new-secret")
 
         assertEquals(SettingsOperation.Failed(SettingsError.StorageUnavailable), result)
-        assertEquals("https://api.openai.com/v1", durable.items.single().baseUrl)
-        assertEquals("old-secret", credentials.values["credential-profile-1"])
+        val committed = durable.items.single()
+        assertEquals("https://other.example/v1", committed.baseUrl)
+        assertEquals("new-secret", credentials.values[committed.credentialAlias])
+        assertFalse(credentials.values.containsKey(priorAlias))
     }
 
-    @Test fun `save cancellation after commit restores profile and credential`() = runTest {
+    @Test fun `save cancellation after durable commit finishes recovery before propagating`() = runTest {
         val durable = FakeProfiles()
         val credentials = FakeCredentials()
-        val vm = ProviderSettingsViewModel(durable, credentials, RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(durable, credentials, RecordingFactory(ValidationResult.Valid))
         vm.save(draft(), "old-secret")
-        val failingVm = ProviderSettingsViewModel(
+        val priorAlias = durable.items.single().credentialAlias
+        val failingVm = testViewModel(
             AmbiguousProfiles(durable, upsertFailure = FailureMode.Cancel), credentials, RecordingFactory(ValidationResult.Valid),
         ).also { it.refresh() }
 
         assertFailsWith<CancellationException> {
             failingVm.save(draft().copy(baseUrl = "https://other.example/v1"), "new-secret")
         }
-        assertEquals("https://api.openai.com/v1", durable.items.single().baseUrl)
-        assertEquals("old-secret", credentials.values["credential-profile-1"])
+        val committed = durable.items.single()
+        assertEquals("https://other.example/v1", committed.baseUrl)
+        assertEquals("new-secret", credentials.values[committed.credentialAlias])
+        assertFalse(credentials.values.containsKey(priorAlias))
     }
 
-    @Test fun `save compensation failure reports inconsistency without leaking secret`() = runTest {
+    @Test fun `ambiguous profile commit reports storage failure without leaking secret`() = runTest {
         val durable = FakeProfiles()
         val credentials = FakeCredentials()
         val profiles = AmbiguousProfiles(durable, upsertFailure = FailureMode.Throw, compensationFails = true)
-        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
 
         val result = vm.save(draft(), "never-observable")
 
-        assertEquals(SettingsOperation.Failed(SettingsError.InconsistentStorage), result)
-        assertEquals(SettingsError.InconsistentStorage, vm.state.value.error)
+        assertEquals(SettingsOperation.Failed(SettingsError.StorageUnavailable), result)
+        assertEquals(SettingsError.StorageUnavailable, vm.state.value.error)
         assertFalse(vm.state.value.toString().contains("never-observable"))
     }
 
@@ -82,7 +91,7 @@ class ProviderSettingsViewModelTest {
         val vm = viewModel(durable)
         vm.save(draft(), "secret")
         vm.refresh()
-        val failing = ProviderSettingsViewModel(
+        val failing = testViewModel(
             AmbiguousProfiles(durable, selectFailure = FailureMode.Throw), FakeCredentials(), RecordingFactory(ValidationResult.Valid),
         ).also { it.refresh() }
 
@@ -93,7 +102,7 @@ class ProviderSettingsViewModelTest {
     @Test fun `selection cancellation after commit restores previous durable selection`() = runTest {
         val durable = FakeProfiles().apply { selected = "previous" }
         durable.upsert(draft().toConfiguration())
-        val failing = ProviderSettingsViewModel(
+        val failing = testViewModel(
             AmbiguousProfiles(durable, selectFailure = FailureMode.Cancel), FakeCredentials(), RecordingFactory(ValidationResult.Valid),
         ).also { it.refresh() }
 
@@ -108,7 +117,7 @@ class ProviderSettingsViewModelTest {
         }
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
-            val vm = ProviderSettingsViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
+            val vm = testViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
             vm.refreshAsync()
             assertFalse(vm.state.value.controlsEnabled)
             gate.complete(Unit)
@@ -125,7 +134,7 @@ class ProviderSettingsViewModelTest {
             override suspend fun select(id: String?) = Unit
             override suspend fun selectedId(): String? = null
         }
-        val vm = ProviderSettingsViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
 
         assertFailsWith<CancellationException> { vm.refresh() }
     }
@@ -135,10 +144,10 @@ class ProviderSettingsViewModelTest {
         val profiles = object : ProviderProfileRepository by FakeProfiles() {
             override suspend fun upsert(profile: ProviderConfiguration) = throw CancellationException("cancelled")
         }
-        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
 
         assertFailsWith<CancellationException> { vm.save(draft(), "new") }
-        assertEquals("old", credentials.values["credential-profile-1"])
+        assertEquals(mapOf("credential-profile-1" to "old"), credentials.values)
     }
 
     @Test fun `delete cancellation restores profile credential and selection`() = runTest {
@@ -147,12 +156,13 @@ class ProviderSettingsViewModelTest {
         val profiles = object : ProviderProfileRepository by delegate {
             override suspend fun delete(id: String) = throw CancellationException("cancelled")
         }
-        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
         vm.save(draft(), "secret")
+        val credentialAlias = delegate.items.single().credentialAlias
         vm.select("profile-1")
 
         assertFailsWith<CancellationException> { vm.delete("profile-1") }
-        assertEquals("secret", credentials.values["credential-profile-1"])
+        assertEquals("secret", credentials.values[credentialAlias])
         assertEquals("profile-1", delegate.selected)
         assertEquals(1, delegate.items.size)
     }
@@ -165,7 +175,7 @@ class ProviderSettingsViewModelTest {
                 if (id == null) error("selection unavailable") else delegate.select(id)
             }
         }
-        val vm = ProviderSettingsViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
+        val vm = testViewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid))
         vm.save(draft(), "secret")
         vm.select("profile-1")
 
@@ -186,7 +196,7 @@ class ProviderSettingsViewModelTest {
         }
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
-            val vm = ProviderSettingsViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
+            val vm = testViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
             vm.refreshAsync()
             vm.selectAsync(null)
             runCurrent()
@@ -207,7 +217,7 @@ class ProviderSettingsViewModelTest {
 
         vm.save(draft(), "sk-test-secret")
 
-        assertEquals("sk-test-secret", credentials.values["credential-profile-1"])
+        assertEquals("sk-test-secret", credentials.values[profiles.items.single().credentialAlias])
         assertFalse(vm.state.value.toString().contains("sk-test-secret"))
         assertFalse(profiles.items.single().toString().contains("sk-test-secret"))
     }
@@ -216,10 +226,11 @@ class ProviderSettingsViewModelTest {
         val credentials = FakeCredentials()
         val vm = viewModel(credentials = credentials)
         vm.save(draft(), "original-secret")
+        val credentialAlias = vm.state.value.profiles.single().configuration.credentialAlias
 
         vm.save(draft().copy(displayName = "Renamed"), "")
 
-        assertEquals("original-secret", credentials.values["credential-profile-1"])
+        assertEquals("original-secret", credentials.values[credentialAlias])
         assertEquals("Renamed", vm.state.value.profiles.single().configuration.displayName)
     }
 
@@ -287,7 +298,7 @@ class ProviderSettingsViewModelTest {
     private fun viewModel(
         profiles: FakeProfiles = FakeProfiles(), credentials: FakeCredentials = FakeCredentials(),
         factory: RecordingFactory = RecordingFactory(ValidationResult.Valid),
-    ) = ProviderSettingsViewModel(profiles, credentials, factory)
+    ) = testViewModel(profiles, credentials, factory)
 
     private fun draft(baseUrl: String = "https://api.openai.com/v1", enabled: Boolean = true) = ProviderDraft(
         id = "profile-1", type = ProviderType.OPENAI_COMPATIBLE, displayName = "My OpenAI",
@@ -305,6 +316,30 @@ private class FakeCredentials : CredentialStore {
     override suspend fun put(alias: String, secret: String): CredentialResult<Unit> { values[alias] = secret; return CredentialResult.Success(Unit) }
     override suspend fun read(alias: String): CredentialResult<String> = values[alias]?.let { CredentialResult.Success(it) } ?: CredentialResult.Failure(CredentialError.Unavailable)
     override suspend fun delete(alias: String): CredentialResult<Unit> { values.remove(alias); return CredentialResult.Success(Unit) }
+}
+
+private fun testViewModel(
+    profiles: ProviderProfileRepository,
+    credentials: CredentialStore,
+    factory: ProviderFactory,
+) = ProviderSettingsViewModel(
+    profiles,
+    credentials,
+    factory,
+    CredentialTransactionCoordinator(profiles, credentials, TestCredentialJournal()),
+)
+
+private class TestCredentialJournal : CredentialTransactionJournalStore {
+    private var value: CredentialTransactionJournal? = null
+    override fun read(): CredentialResult<CredentialTransactionJournal?> = CredentialResult.Success(value)
+    override fun write(journal: CredentialTransactionJournal): CredentialResult<Unit> {
+        value = journal
+        return CredentialResult.Success(Unit)
+    }
+    override fun clear(): CredentialResult<Unit> {
+        value = null
+        return CredentialResult.Success(Unit)
+    }
 }
 
 private class FakeProfiles : ProviderProfileRepository {

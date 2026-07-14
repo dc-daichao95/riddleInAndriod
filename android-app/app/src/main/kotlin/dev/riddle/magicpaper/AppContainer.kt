@@ -36,14 +36,21 @@ import dev.riddle.magicpaper.provider.OkHttpModelTransport
 import dev.riddle.magicpaper.provider.OpenAiCompatibleProvider
 import dev.riddle.magicpaper.security.AndroidKeystoreCredentialStore
 import dev.riddle.magicpaper.security.CredentialResult
+import dev.riddle.magicpaper.security.DurableCredentialTransactionJournalStore
+import dev.riddle.magicpaper.security.SharedPreferencesCredentialTransactionJournalStorage
+import dev.riddle.magicpaper.settings.CredentialTransactionCoordinator
+import dev.riddle.magicpaper.settings.CredentialTransactionResult
 import dev.riddle.magicpaper.settings.ProviderFactory
 import dev.riddle.magicpaper.settings.ProviderProfileRepository
 import dev.riddle.magicpaper.settings.ProviderSettingsViewModel
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONObject
@@ -65,6 +72,22 @@ class AppContainer(context: Context) {
     val credentialStore = AndroidKeystoreCredentialStore(appContext, dispatchers.io)
     val memoryRepository = RoomMemoryRepository(database)
     val profileRepository = SharedPreferencesProfileRepository(appContext)
+    private val applicationScope = CoroutineScope(SupervisorJob() + dispatchers.io)
+    private val credentialJournal = DurableCredentialTransactionJournalStore(
+        SharedPreferencesCredentialTransactionJournalStorage(appContext),
+    )
+    val credentialTransactions = CredentialTransactionCoordinator(
+        profileRepository,
+        credentialStore,
+        credentialJournal,
+    )
+    val credentialRecoveryState = MutableStateFlow<CredentialTransactionResult<Unit>?>(null)
+
+    init {
+        applicationScope.launch {
+            credentialRecoveryState.value = credentialTransactions.recover()
+        }
+    }
     private val transport = OkHttpModelTransport(
         credentials = { alias -> (credentialStore.read(alias) as? CredentialResult.Success)?.value },
         client = httpClient,
@@ -119,7 +142,12 @@ class AppContainer(context: Context) {
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
             require(modelClass.isAssignableFrom(ProviderSettingsViewModel::class.java))
             @Suppress("UNCHECKED_CAST")
-            return ProviderSettingsViewModel(profileRepository, credentialStore, providerFactory) as T
+            return ProviderSettingsViewModel(
+                profileRepository,
+                credentialStore,
+                providerFactory,
+                credentialTransactions,
+            ) as T
         }
     }
 
