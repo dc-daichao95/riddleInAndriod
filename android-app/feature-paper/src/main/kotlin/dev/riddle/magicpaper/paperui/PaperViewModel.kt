@@ -9,6 +9,7 @@ import dev.riddle.magicpaper.model.*
 import dev.riddle.magicpaper.paper.PaperIntent
 import dev.riddle.magicpaper.paper.PaperRenderModel
 import dev.riddle.magicpaper.paper.RasterizedPage
+import dev.riddle.magicpaper.paper.SettingsEntryMode
 import java.io.FileInputStream
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -24,6 +25,7 @@ data class PaperUiState(
     val reply: String = "",
     val helpVisible: Boolean = false,
     val portraitLocked: Boolean = false,
+    val settingsEntryMode: SettingsEntryMode = SettingsEntryMode.MAGIC_RUNE_BUTTON,
 ) {
     val canCancel: Boolean get() = phase == PaperPhase.Preparing || phase == PaperPhase.Thinking || phase == PaperPhase.Streaming
 }
@@ -33,6 +35,7 @@ sealed interface PaperUiIntent {
     data object ShowHelp : PaperUiIntent
     data object HideHelp : PaperUiIntent
     data object SettingsClosed : PaperUiIntent
+    data object OpenSettings : PaperUiIntent
     data class SetPortraitLocked(val locked: Boolean) : PaperUiIntent
 }
 
@@ -49,7 +52,9 @@ interface PaperPersistence {
 
 interface PaperPreferences {
     val portraitLocked: Flow<Boolean>
+    val settingsEntryMode: Flow<SettingsEntryMode>
     suspend fun setPortraitLocked(locked: Boolean)
+    suspend fun setSettingsEntryMode(mode: SettingsEntryMode)
 }
 
 data class SelectedModel(val provider: ModelProvider, val modelId: String, val capabilities: ModelCapabilities)
@@ -98,6 +103,9 @@ class PaperViewModel(
         viewModelScope.launch(workerDispatcher) {
             preferences.portraitLocked.collect { locked -> mutableState.update { it.copy(portraitLocked = locked) } }
         }
+        viewModelScope.launch(workerDispatcher) {
+            preferences.settingsEntryMode.collect { mode -> mutableState.update { it.copy(settingsEntryMode = mode) } }
+        }
     }
 
     fun onPaperIntent(intent: PaperIntent) {
@@ -129,6 +137,7 @@ class PaperViewModel(
                 settingsOpen = false
                 scheduleCommitIfNeeded()
             }
+            PaperUiIntent.OpenSettings -> openSettings()
             is PaperUiIntent.SetPortraitLocked -> viewModelScope.launch(workerDispatcher) {
                 preferences.setPortraitLocked(intent.locked)
             }

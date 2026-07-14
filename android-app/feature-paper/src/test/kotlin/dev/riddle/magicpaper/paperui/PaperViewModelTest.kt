@@ -22,6 +22,7 @@ import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import dev.riddle.magicpaper.paper.PaperIntent
 import dev.riddle.magicpaper.paper.PageRasterizer
+import dev.riddle.magicpaper.paper.SettingsEntryMode
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -213,7 +214,9 @@ private class FakePaperPersistence(initial: PaperRecovery = PaperRecovery()) : P
 
 private class FakePaperPreferences(initial: Boolean = false) : PaperPreferences {
     override val portraitLocked = MutableStateFlow(initial)
+    override val settingsEntryMode = MutableStateFlow(SettingsEntryMode.MAGIC_RUNE_BUTTON)
     override suspend fun setPortraitLocked(locked: Boolean) { portraitLocked.value = locked }
+    override suspend fun setSettingsEntryMode(mode: SettingsEntryMode) { settingsEntryMode.value = mode }
 }
 
 private class CountingProvider : ModelProvider {

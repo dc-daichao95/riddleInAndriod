@@ -28,6 +28,7 @@ import dev.riddle.magicpaper.paperui.PaperViewModel
 import dev.riddle.magicpaper.paperui.ModelSelection
 import dev.riddle.magicpaper.paperui.SelectedModel
 import dev.riddle.magicpaper.paper.PageRasterizer
+import dev.riddle.magicpaper.paper.SettingsEntryMode
 import dev.riddle.magicpaper.provider.DeepSeekProvider
 import dev.riddle.magicpaper.provider.OkHttpModelTransport
 import dev.riddle.magicpaper.provider.OpenAiCompatibleProvider
@@ -159,8 +160,16 @@ private class RoomPaperPersistence(
 private class SharedPaperPreferences(context: Context) : PaperPreferences {
     private val preferences = context.getSharedPreferences("app-preferences-v1", Context.MODE_PRIVATE)
     override val portraitLocked = MutableStateFlow(preferences.getBoolean("portrait_locked", false))
+    override val settingsEntryMode = MutableStateFlow(
+        SettingsEntryMode.fromPersistedId(preferences.getString("settings_entry_mode", null)),
+    )
     override suspend fun setPortraitLocked(locked: Boolean) {
         if (preferences.edit().putBoolean("portrait_locked", locked).commit()) portraitLocked.value = locked
+    }
+    override suspend fun setSettingsEntryMode(mode: SettingsEntryMode) {
+        if (preferences.edit().putString("settings_entry_mode", mode.persistedId).commit()) {
+            settingsEntryMode.value = mode
+        }
     }
 }
 

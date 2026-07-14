@@ -16,7 +16,13 @@ class MagicPaperView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
     var onPaperIntent: (PaperIntent) -> Unit = {}
-    var settingsEntryPolicy: SettingsEntryPolicy = ThreeFingerLongPressPolicy()
+    var settingsEntryMode: SettingsEntryMode = SettingsEntryMode.MAGIC_RUNE_BUTTON
+        set(value) {
+            if (field == value) return
+            field = value
+            settingsEntryPolicy = value.createPolicy()
+        }
+    private var settingsEntryPolicy: SettingsEntryPolicy = settingsEntryMode.createPolicy()
 
     private val inputReducer = PaperInputReducer()
     private val inkBitmapCache = InkBitmapCache(inkColor = context.getColor(R.color.magic_paper_ink))

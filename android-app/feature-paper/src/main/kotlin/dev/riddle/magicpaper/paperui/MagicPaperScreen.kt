@@ -54,6 +54,7 @@ fun MagicPaperScreen(
             factory = { context -> MagicPaperView(context).apply { this.onPaperIntent = onPaperIntent } },
             update = { view ->
                 view.onPaperIntent = onPaperIntent
+                view.settingsEntryMode = state.settingsEntryMode
                 view.submitRenderModel(state.renderModel)
             },
             modifier = Modifier.fillMaxSize().testTag("magic_paper").semantics {

@@ -27,6 +27,22 @@ fun interface SettingsEntryPolicy {
     fun onTouchFrame(frame: TouchFrame, monotonicMillis: Long): SettingsEntryEvent?
 }
 
+enum class SettingsEntryMode(val persistedId: String) {
+    MAGIC_RUNE_BUTTON("magic_rune_button"),
+    THREE_FINGER_LONG_PRESS("three_finger_long_press"),
+    ;
+
+    fun createPolicy(): SettingsEntryPolicy = when (this) {
+        MAGIC_RUNE_BUTTON -> SettingsEntryPolicy { _, _ -> null }
+        THREE_FINGER_LONG_PRESS -> ThreeFingerLongPressPolicy()
+    }
+
+    companion object {
+        fun fromPersistedId(id: String?): SettingsEntryMode =
+            entries.firstOrNull { it.persistedId == id } ?: MAGIC_RUNE_BUTTON
+    }
+}
+
 class ThreeFingerLongPressPolicy(
     private val holdMillis: Long = 2_000,
     private val slopNormalized: Float = 0.02f,
