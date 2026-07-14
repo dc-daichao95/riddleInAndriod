@@ -35,4 +35,17 @@
     <string name="provider_error_inconsistent_storage">无法恢复服务商存储。使用前请删除或重新输入此服务商的凭据。</string>
     <string name="provider_error_validation">连接验证失败。</string>
     <string name="provider_operation_in_progress">正在执行服务商操作</string>
+    <string name="provider_step">第 %1$d 步，共 %2$d 步</string>
+    <string name="provider_continue">继续验证凭据</string>
+    <string name="provider_validate_models">确认目标、验证密钥并获取模型</string>
+    <string name="provider_manual_disclosure">此端点不提供模型列表。手动验证只发送“ping”，最多请求一个输出 token，可能产生费用，并且不会重试。</string>
+    <string name="provider_manual_validate">接受并验证模型</string>
+    <string name="provider_api_key_content_description">API 密钥，安全输入。复制、剪切和自动填充已禁用。</string>
+    <string name="provider_error_authentication">API 密钥未通过验证。</string>
+    <string name="provider_error_authorization">此 API 密钥无权执行所请求的操作。</string>
+    <string name="provider_error_rate_limited">已达到服务商速率限制，请稍后重试。</string>
+    <string name="provider_error_network">无法连接到服务商。</string>
+    <string name="provider_error_timeout">服务商验证在 10 秒后超时。</string>
+    <string name="provider_error_invalid_response">服务商返回了无效响应。</string>
+    <string name="provider_error_cancelled">服务商验证已取消。</string>
 </resources>

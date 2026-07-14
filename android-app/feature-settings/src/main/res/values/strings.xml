@@ -14,6 +14,7 @@
     <string name="provider_url_label">HTTPS base URL</string>
     <string name="provider_model_label">Model ID</string>
     <string name="provider_api_key_label">API key</string>
+    <string name="provider_api_key_content_description">API key, secure input. Copy, cut, and autofill are disabled.</string>
     <string name="provider_enabled_label">Enabled</string>
     <string name="provider_save">Save provider</string>
     <string name="provider_edit">Edit</string>
@@ -34,5 +35,17 @@
     <string name="provider_error_storage">Provider storage is unavailable.</string>
     <string name="provider_error_inconsistent_storage">Provider storage could not be restored. Delete or re-enter this provider credential before use.</string>
     <string name="provider_error_validation">Connection validation failed.</string>
+    <string name="provider_error_authentication">The API key was not accepted.</string>
+    <string name="provider_error_authorization">This API key is not authorized for the requested operation.</string>
+    <string name="provider_error_rate_limited">The provider rate limit was reached. Try again later.</string>
+    <string name="provider_error_network">The provider could not be reached.</string>
+    <string name="provider_error_timeout">Provider validation timed out after 10 seconds.</string>
+    <string name="provider_error_invalid_response">The provider returned an invalid response.</string>
+    <string name="provider_error_cancelled">Provider validation was cancelled.</string>
     <string name="provider_operation_in_progress">Provider operation in progress</string>
+    <string name="provider_step">Step %1$d of %2$d</string>
+    <string name="provider_continue">Continue to credential validation</string>
+    <string name="provider_validate_models">Confirm host, validate key, and get models</string>
+    <string name="provider_manual_disclosure">This endpoint does not provide a model catalog. The manual check sends only “ping”, requests one output token, may be billable, and is not retried.</string>
+    <string name="provider_manual_validate">Accept and validate model</string>
 </resources>

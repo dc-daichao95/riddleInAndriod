@@ -10,11 +10,17 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.setMain
@@ -22,6 +28,351 @@ import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProviderSettingsViewModelTest {
+    @Test fun `manual validation async reuses pending generation and reaches model selection`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = viewModel(factory = RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Unsupported))
+            vm.validateAndDiscoverAsync(draft().copy(defaultModelId = null), "secret".toCharArray(), "api.openai.com") { }
+            advanceUntilIdle()
+            assertTrue(vm.state.value.manualModelAllowed)
+
+            vm.validateManualModelAsync("manual-model")
+            advanceUntilIdle()
+
+            assertEquals(ProviderSetupStage.MODEL_SELECTION, vm.state.value.setupStage)
+            assertEquals("manual-model", vm.state.value.selectedDiscoveredModelId)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `cancel abandons published candidate before non cooperative provider returns`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val accepted = CompletableDeferred<Unit>()
+        val credentials = FakeCredentials()
+        val factory = ProviderFactory { configuration -> object : ModelProvider {
+            override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
+            override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
+            override suspend fun listModels(): ModelDiscoveryResult = withContext(NonCancellable) {
+                gate.await(); ModelDiscoveryResult.Unsupported
+            }
+            override suspend fun validate(configuration: ProviderConfiguration) = ValidationResult.Valid
+        } }
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val journal = TestCredentialJournal()
+            val vm = testViewModel(FakeProfiles(), credentials, factory, journal)
+            vm.validateAndDiscoverAsync(draft().copy(defaultModelId = null), "secret".toCharArray(), "api.openai.com") { accepted.complete(Unit) }
+            runCurrent()
+            assertTrue(accepted.isCompleted)
+            assertTrue(credentials.values.isNotEmpty())
+
+            vm.cancelAndAbandonAsync()
+            runCurrent()
+
+            assertTrue(credentials.values.isEmpty())
+            assertNull(journal.current)
+            assertEquals(ProviderSetupStage.ENDPOINT, vm.state.value.setupStage)
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.discoveredModels.isEmpty())
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `submission cancelled before dispatch wipes chars without writing or acknowledging`() = runTest {
+        val secret = "secret-before-dispatch".toCharArray()
+        val credentials = FakeCredentials()
+        var accepted = false
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = testViewModel(FakeProfiles(), credentials, RecordingFactory(ValidationResult.Valid))
+            vm.validateAndDiscoverAsync(draft().copy(defaultModelId = null), secret, "api.openai.com") { accepted = true }
+            vm.cancelAndAbandonAsync()
+            runCurrent()
+
+            assertTrue(secret.all { it == '\u0000' })
+            assertTrue(credentials.values.isEmpty())
+            assertFalse(accepted)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `editor invalidation does not release gated refresh busy ownership`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val profiles = object : ProviderProfileRepository by FakeProfiles() {
+            override suspend fun list(): List<ProviderConfiguration> { gate.await(); return emptyList() }
+        }
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = testViewModel(profiles, FakeCredentials(), RecordingFactory(ValidationResult.Valid))
+            vm.refreshAsync()
+            vm.updateEditor(ProviderEditorUiState(displayName = "Changed"))
+            assertTrue(vm.state.value.operationInProgress)
+            assertFalse(vm.state.value.controlsEnabled)
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertFalse(vm.state.value.operationInProgress)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `old cleanup failure and late callback cannot pollute reopened candidate session`() = runTest {
+        val deleteGate = CompletableDeferred<Unit>()
+        val delegate = FakeCredentials()
+        var deleteCalls = 0
+        val credentials = object : CredentialStore by delegate {
+            override suspend fun delete(alias: String): CredentialResult<Unit> {
+                deleteCalls++
+                return if (deleteCalls == 1) {
+                    deleteGate.await()
+                    CredentialResult.Failure(CredentialError.Unavailable)
+                } else delegate.delete(alias)
+            }
+        }
+        val factory = RecordingFactory(
+            ValidationResult.Valid,
+            ModelDiscoveryResult.Success(listOf(ModelDescriptor("model", "Model", ModelCapabilities(streaming = true)))),
+        )
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = testViewModel(FakeProfiles(), credentials, factory)
+            vm.validateAndDiscover(draft().copy(defaultModelId = null), "old-secret", "api.openai.com")
+            vm.cancelAndAbandonAsync()
+            runCurrent()
+
+            vm.applyPreset(PresetKind.OPENAI, "OpenAI")
+            vm.reviewEndpoint()
+            var newAccepted = false
+            vm.validateAndDiscoverAsync(
+                vm.state.value.editor.draft().copy(defaultModelId = null),
+                "new-secret".toCharArray(),
+                "api.openai.com",
+            ) { newAccepted = true }
+            runCurrent()
+            assertFalse(newAccepted)
+
+            deleteGate.complete(Unit)
+            advanceUntilIdle()
+
+            assertTrue(newAccepted)
+            assertNull(vm.state.value.error)
+            assertEquals(ProviderSetupStage.MODEL_SELECTION, vm.state.value.setupStage)
+            assertEquals(listOf("new-secret"), delegate.values.values.toList())
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `manual validation times out after ten seconds and cleans candidate`() = runTest {
+        val credentials = FakeCredentials()
+        val factory = ProviderFactory { configuration -> object : ModelProvider {
+            override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
+            override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
+            override suspend fun listModels() = ModelDiscoveryResult.Unsupported
+            override suspend fun validate(configuration: ProviderConfiguration): ValidationResult = awaitCancellation()
+        } }
+        val vm = testViewModel(FakeProfiles(), credentials, factory)
+        vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com")
+
+        val result = async { vm.validateManualModel("manual") }
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        assertEquals(SettingsOperation.Failed(SettingsError.Timeout), result.await())
+        assertTrue(credentials.values.isEmpty())
+    }
+
+    @Test fun `visible discovery cancellation publishes typed cancellation and cleans candidate`() = runTest {
+        val credentials = FakeCredentials()
+        val factory = ProviderFactory { configuration -> object : ModelProvider {
+            override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
+            override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
+            override suspend fun listModels(): ModelDiscoveryResult = awaitCancellation()
+            override suspend fun validate(configuration: ProviderConfiguration) = ValidationResult.Valid
+        } }
+        val vm = testViewModel(FakeProfiles(), credentials, factory)
+        val operation = async {
+            vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com")
+        }
+        runCurrent()
+
+        operation.cancelAndJoin()
+
+        assertEquals(SettingsError.Cancelled, vm.state.value.error)
+        assertTrue(credentials.values.isEmpty())
+    }
+
+    @Test fun `abandon reports credential cleanup failure`() = runTest {
+        val delegate = FakeCredentials()
+        val failingDelete = object : CredentialStore by delegate {
+            override suspend fun delete(alias: String) = CredentialResult.Failure(CredentialError.Unavailable)
+        }
+        val vm = testViewModel(FakeProfiles(), failingDelete, RecordingFactory(
+            ValidationResult.Valid,
+            ModelDiscoveryResult.Success(listOf(ModelDescriptor("model", "Model", ModelCapabilities(streaming = true)))),
+        ))
+        vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com")
+
+        assertEquals(SettingsOperation.Failed(SettingsError.CredentialUnavailable), vm.abandonEditor())
+        assertEquals(SettingsError.CredentialUnavailable, vm.state.value.error)
+    }
+
+    @Test fun `cancel and abandon bypasses busy and ignores a late discovery result`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val credentials = FakeCredentials()
+        val factory = ProviderFactory { configuration -> object : ModelProvider {
+            override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
+            override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
+            override suspend fun listModels(): ModelDiscoveryResult = withContext(NonCancellable) {
+                gate.await()
+                ModelDiscoveryResult.Success(listOf(ModelDescriptor("late", "Late", configuration.capabilities)))
+            }
+            override suspend fun validate(configuration: ProviderConfiguration) = ValidationResult.Valid
+        } }
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = testViewModel(FakeProfiles(), credentials, factory)
+            vm.validateAndDiscoverAsync(draft().copy(defaultModelId = null), "secret".toCharArray(), "api.openai.com") { }
+            runCurrent()
+            assertTrue(vm.state.value.setupInProgress)
+
+            vm.cancelAndAbandonAsync()
+            gate.complete(Unit)
+            advanceUntilIdle()
+
+            assertEquals(ProviderSetupStage.ENDPOINT, vm.state.value.setupStage)
+            assertTrue(vm.state.value.discoveredModels.isEmpty())
+            assertTrue(credentials.values.isEmpty())
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `secret acceptance callback waits until candidate credential is durably accepted`() = runTest {
+        val putGate = CompletableDeferred<Unit>()
+        val delegate = FakeCredentials()
+        val blocking = object : CredentialStore by delegate {
+            override suspend fun put(alias: String, secret: String): CredentialResult<Unit> {
+                putGate.await()
+                return delegate.put(alias, secret)
+            }
+        }
+        var accepted = false
+        val submitted = "secret".toCharArray()
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = testViewModel(FakeProfiles(), blocking, RecordingFactory(ValidationResult.Valid))
+            vm.validateAndDiscoverAsync(draft().copy(defaultModelId = null), submitted, "api.openai.com") { accepted = true }
+            runCurrent()
+            assertFalse(accepted)
+            assertTrue(submitted.all { it == '\u0000' })
+            putGate.complete(Unit)
+            advanceUntilIdle()
+            assertTrue(accepted)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `preset change abandons pending candidate and invalidates old model selection`() = runTest {
+        val credentials = FakeCredentials()
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = viewModel(credentials = credentials, factory = RecordingFactory(
+                ValidationResult.Valid,
+                ModelDiscoveryResult.Success(listOf(ModelDescriptor("old", "Old", ModelCapabilities(streaming = true)))),
+            ))
+            vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com")
+
+            vm.applyPreset(PresetKind.DEEPSEEK, "DeepSeek")
+            advanceUntilIdle()
+
+            assertEquals(ProviderSetupStage.ENDPOINT, vm.state.value.setupStage)
+            assertTrue(credentials.values.isEmpty())
+            assertIs<SettingsOperation.Failed>(vm.saveValidatedProfile())
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `manual provider exception is typed and candidate is cleaned`() = runTest {
+        val credentials = FakeCredentials()
+        val factory = ProviderFactory { configuration -> object : ModelProvider {
+            override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
+            override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
+            override suspend fun listModels() = ModelDiscoveryResult.Unsupported
+            override suspend fun validate(configuration: ProviderConfiguration): ValidationResult = error("transport failed")
+        } }
+        val vm = testViewModel(FakeProfiles(), credentials, factory)
+        vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com")
+
+        assertEquals(SettingsOperation.Failed(SettingsError.Network), vm.validateManualModel("manual"))
+        assertTrue(credentials.values.isEmpty())
+    }
+
+    @Test fun `validate discovers sorted models without persisting profile or completion`() = runTest {
+        val profiles = FakeProfiles()
+        val credentials = FakeCredentials()
+        val factory = RecordingFactory(
+            ValidationResult.Valid,
+            ModelDiscoveryResult.Success(listOf(
+                ModelDescriptor("z", "Z", ModelCapabilities(streaming = true)),
+                ModelDescriptor("a", "A", ModelCapabilities(streaming = true)),
+                ModelDescriptor("a", "duplicate", ModelCapabilities(streaming = true)),
+            )),
+        )
+        val vm = viewModel(profiles, credentials, factory)
+
+        assertEquals(
+            SettingsOperation.Success,
+            vm.validateAndDiscover(draft().copy(defaultModelId = null), "sentinel-api-key", "api.openai.com"),
+        )
+
+        assertTrue(profiles.items.isEmpty())
+        assertNull(profiles.selected)
+        assertEquals(listOf("a", "z"), vm.state.value.discoveredModels.map { it.id })
+        assertEquals(ProviderSetupStage.MODEL_SELECTION, vm.state.value.setupStage)
+        assertTrue(factory.validationInputs.isEmpty())
+        assertFalse(vm.state.value.toString().contains("sentinel-api-key"))
+    }
+
+    @Test fun `unsupported discovery requires explicit manual fallback before validation`() = runTest {
+        val factory = RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Unsupported)
+        val vm = viewModel(factory = factory)
+
+        assertEquals(
+            SettingsOperation.ManualModelRequired,
+            vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com"),
+        )
+        assertTrue(vm.state.value.manualModelAllowed)
+        assertTrue(factory.validationInputs.isEmpty())
+
+        assertEquals(SettingsOperation.Success, vm.validateManualModel("manual-model"))
+        assertEquals("manual-model", vm.state.value.selectedDiscoveredModelId)
+        assertEquals(1, factory.validationInputs.size)
+    }
+
+    @Test fun `discovery failure abandons candidate and exposes typed model error`() = runTest {
+        val profiles = FakeProfiles()
+        val credentials = FakeCredentials()
+        val error = ModelError.Authentication("bad key")
+        val vm = viewModel(profiles, credentials, RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Failed(error)))
+
+        assertEquals(
+            SettingsOperation.Failed(SettingsError.Authentication),
+            vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com"),
+        )
+
+        assertTrue(credentials.values.isEmpty())
+        assertTrue(profiles.items.isEmpty())
+        assertEquals(error, vm.state.value.discoveryError)
+    }
+
+    @Test fun `validated model save is the first durable profile mutation and selects it`() = runTest {
+        val profiles = FakeProfiles()
+        val vm = viewModel(
+            profiles,
+            factory = RecordingFactory(
+                ValidationResult.Valid,
+                ModelDiscoveryResult.Success(listOf(ModelDescriptor("model-a", "A", ModelCapabilities(streaming = true)))),
+            ),
+        )
+        vm.validateAndDiscover(draft().copy(defaultModelId = null), "secret", "api.openai.com")
+        vm.selectDiscoveredModel("model-a")
+
+        assertEquals(SettingsOperation.Success, vm.saveValidatedProfile())
+
+        assertEquals("model-a", profiles.items.single().defaultModelId)
+        assertEquals("profile-1", profiles.selected)
+    }
     @Test fun `new profile throw after durable commit preserves candidate for restart recovery`() = runTest {
         val durable = FakeProfiles()
         val profiles = AmbiguousProfiles(durable, upsertFailure = FailureMode.Throw)
@@ -322,22 +673,24 @@ private fun testViewModel(
     profiles: ProviderProfileRepository,
     credentials: CredentialStore,
     factory: ProviderFactory,
+    journal: TestCredentialJournal = TestCredentialJournal(),
 ) = ProviderSettingsViewModel(
     profiles,
     credentials,
     factory,
-    CredentialTransactionCoordinator(profiles, credentials, TestCredentialJournal()),
+    CredentialTransactionCoordinator(profiles, credentials, journal, Dispatchers.Unconfined),
 )
 
 private class TestCredentialJournal : CredentialTransactionJournalStore {
-    private var value: CredentialTransactionJournal? = null
-    override fun read(): CredentialResult<CredentialTransactionJournal?> = CredentialResult.Success(value)
+    var current: CredentialTransactionJournal? = null
+        private set
+    override fun read(): CredentialResult<CredentialTransactionJournal?> = CredentialResult.Success(current)
     override fun write(journal: CredentialTransactionJournal): CredentialResult<Unit> {
-        value = journal
+        current = journal
         return CredentialResult.Success(Unit)
     }
     override fun clear(): CredentialResult<Unit> {
-        value = null
+        current = null
         return CredentialResult.Success(Unit)
     }
 }
@@ -391,7 +744,10 @@ private class AmbiguousProfiles(
     }
 }
 
-private class RecordingFactory(private val validation: ValidationResult) : ProviderFactory {
+private class RecordingFactory(
+    private val validation: ValidationResult,
+    private val discovery: ModelDiscoveryResult = ModelDiscoveryResult.Success(emptyList()),
+) : ProviderFactory {
     val created = mutableListOf<ProviderConfiguration>()
     val validationInputs = mutableListOf<ProviderConfiguration>()
     override fun create(configuration: ProviderConfiguration): ModelProvider {
@@ -399,7 +755,7 @@ private class RecordingFactory(private val validation: ValidationResult) : Provi
         return object : ModelProvider {
             override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
             override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
-            override suspend fun listModels() = ModelDiscoveryResult.Success(emptyList<ModelDescriptor>())
+            override suspend fun listModels() = discovery
             override suspend fun validate(configuration: ProviderConfiguration): ValidationResult {
                 validationInputs += configuration
                 return validation

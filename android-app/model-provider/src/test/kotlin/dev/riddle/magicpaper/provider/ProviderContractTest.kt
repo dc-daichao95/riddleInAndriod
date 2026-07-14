@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.time.Instant
+import org.json.JSONObject
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -128,6 +129,14 @@ class ProviderContractTest {
         assertTrue(transport.requests.last().url.startsWith("https://actual-host.test/api/"))
         assertFalse(transport.requests.last().body.contains("secret prompt"))
         assertFalse(transport.requests.last().body.contains("image"))
+        val validationBody = JSONObject(transport.requests.last().body)
+        assertEquals(1, validationBody.getInt("max_tokens"))
+        assertEquals(1, validationBody.getJSONArray("messages").length())
+        assertEquals("user", validationBody.getJSONArray("messages").getJSONObject(0).getString("role"))
+        assertEquals("ping", validationBody.getJSONArray("messages").getJSONObject(0).getString("content"))
+        assertFalse(validationBody.has("tools"))
+        assertFalse(validationBody.has("metadata"))
+        assertEquals(2, transport.requests.size)
         assertEquals(TransportMethod.GET, transport.requests.first().method)
         assertEquals(TransportMethod.POST, transport.requests.last().method)
     }

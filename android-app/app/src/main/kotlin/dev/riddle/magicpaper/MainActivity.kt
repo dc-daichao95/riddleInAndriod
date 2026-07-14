@@ -2,6 +2,8 @@ package dev.riddle.magicpaper
 
 import android.content.pm.ActivityInfo
 import android.os.Bundle
+import android.view.WindowManager
+import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -9,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -26,7 +29,7 @@ import dev.riddle.magicpaper.settings.ProviderSettingsRoute
 class MainActivity : ComponentActivity() {
     private val container get() = (application as RiddleApplication).container
     val paperViewModel: PaperViewModel by viewModels { container.paperViewModelFactory }
-    private val providerSettingsViewModel: dev.riddle.magicpaper.settings.ProviderSettingsViewModel by viewModels {
+    val providerSettingsViewModel: dev.riddle.magicpaper.settings.ProviderSettingsViewModel by viewModels {
         container.providerSettingsViewModelFactory
     }
 
@@ -41,7 +44,23 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 val state by paperViewModel.state.collectAsStateWithLifecycle()
+                val providerState by providerSettingsViewModel.state.collectAsStateWithLifecycle()
                 var settingsVisible by rememberSaveable { mutableStateOf(false) }
+                val credentialEditorVisible = settingsVisible &&
+                    providerState.setupStage == dev.riddle.magicpaper.settings.ProviderSetupStage.CREDENTIAL_VALIDATION
+                DisposableEffect(credentialEditorVisible) {
+                    val previousAutofill = window.decorView.importantForAutofill
+                    if (credentialEditorVisible) {
+                        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        window.decorView.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+                    }
+                    onDispose {
+                        if (credentialEditorVisible) {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                            window.decorView.importantForAutofill = previousAutofill
+                        }
+                    }
+                }
                 LaunchedEffect(state.portraitLocked) {
                     this@MainActivity.requestedOrientation = if (state.portraitLocked) {
                         ActivityInfo.SCREEN_ORIENTATION_PORTRAIT

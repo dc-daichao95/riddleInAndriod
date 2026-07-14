@@ -6,12 +6,16 @@ import dev.riddle.magicpaper.model.*
 import dev.riddle.magicpaper.security.CredentialResult
 import dev.riddle.magicpaper.security.CredentialStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.net.URI
 import java.util.UUID
 
@@ -49,6 +53,7 @@ data class ProviderPreset(
 )
 
 enum class ValidationStatus { NotTested, Testing, Valid, Invalid }
+enum class ProviderSetupStage { ENDPOINT, CREDENTIAL_VALIDATION, MODEL_SELECTION }
 
 data class ProviderProfileUiModel(
     val configuration: ProviderConfiguration,
@@ -73,17 +78,28 @@ data class ProviderSettingsUiState(
     val selectedProfileId: String? = null,
     val editor: ProviderEditorUiState = ProviderEditorUiState(),
     val operationInProgress: Boolean = false,
+    val setupInProgress: Boolean = false,
     val error: SettingsError? = null,
+    val setupStage: ProviderSetupStage = ProviderSetupStage.ENDPOINT,
+    val confirmedHost: String? = null,
+    val discoveredModels: List<ModelDescriptor> = emptyList(),
+    val selectedDiscoveredModelId: String? = null,
+    val manualModelAllowed: Boolean = false,
+    val discoveryError: ModelError? = null,
 ) {
-    val controlsEnabled: Boolean get() = !operationInProgress
+    val controlsEnabled: Boolean get() = !operationInProgress && !setupInProgress
 }
 
-enum class SettingsError { InvalidEndpoint, CredentialUnavailable, StorageUnavailable, InconsistentStorage, ValidationFailed }
+enum class SettingsError {
+    InvalidEndpoint, CredentialUnavailable, StorageUnavailable, InconsistentStorage, ValidationFailed,
+    Authentication, Authorization, RateLimited, Network, Timeout, InvalidResponse, Cancelled,
+}
 
 sealed interface SettingsOperation {
     data object Success : SettingsOperation
     data class InvalidEndpoint(val reason: SettingsError = SettingsError.InvalidEndpoint) : SettingsOperation
     data class HostConfirmationRequired(val host: String) : SettingsOperation
+    data object ManualModelRequired : SettingsOperation
     data class Failed(val reason: SettingsError) : SettingsOperation
 }
 
@@ -93,19 +109,298 @@ class ProviderSettingsViewModel(
     private val providerFactory: ProviderFactory,
     private val credentialTransactions: CredentialTransactionCoordinator,
 ) : ViewModel() {
+    private class ErasableSecret(private val value: CharArray) {
+        fun consume(): String = String(value).also { clear() }
+        fun clear() = value.fill('\u0000')
+    }
+
+    private data class PendingValidation(
+        val profile: ProviderConfiguration,
+        val candidate: CandidateCredential?,
+        val generation: Long,
+    )
+
+    private var pendingValidation: PendingValidation? = null
+    private var activeSetupJob: Job? = null
+    private var setupGeneration = 0L
     private val mutableState = MutableStateFlow(ProviderSettingsUiState())
     val state: StateFlow<ProviderSettingsUiState> = mutableState.asStateFlow()
 
     fun refreshAsync() = launchOperation { refresh() }
-    fun saveAsync(draft: ProviderDraft, secret: String) = launchOperation { save(draft, secret) }
     fun validateAsync(id: String, confirmedHost: String) = launchOperation { validate(id, confirmedHost) }
     fun deleteAsync(id: String) = launchOperation { delete(id) }
     fun setEnabledAsync(id: String, enabled: Boolean) = launchOperation { setEnabled(id, enabled) }
     fun selectAsync(id: String?) = launchOperation { select(id) }
+    fun validateAndDiscoverAsync(
+        draft: ProviderDraft,
+        secret: CharArray,
+        confirmedHost: String,
+        onSecretAccepted: () -> Unit = {},
+    ) {
+        val submission = ErasableSecret(secret)
+        val job = launchSetupOperation { generation ->
+            validateAndDiscoverInternal(draft, submission, confirmedHost, generation, onSecretAccepted)
+        }
+        if (job == null) submission.clear() else job.invokeOnCompletion { submission.clear() }
+    }
+    fun validateManualModelAsync(modelId: String) {
+        val generation = pendingValidation?.generation ?: return
+        launchSetupOperation(generation) { validateManualModel(it, modelId) }
+    }
+    fun saveValidatedProfileAsync() = launchOperation { saveValidatedProfile() }
+    fun abandonEditorAsync() = cancelAndAbandonAsync()
 
-    fun updateEditor(editor: ProviderEditorUiState) { mutableState.value = mutableState.value.copy(editor = editor) }
+    fun cancelAndAbandonAsync() {
+        val job = activeSetupJob
+        val cleanupGeneration = ++setupGeneration
+        activeSetupJob = null
+        val candidate = pendingValidation?.candidate
+        pendingValidation = null
+        job?.cancel()
+        resetSetupState()
+        mutableState.value = mutableState.value.copy(setupInProgress = false)
+        viewModelScope.launch {
+            if (candidate != null) {
+                val result = withContext(NonCancellable) { credentialTransactions.abandon(candidate) }
+                if (setupGeneration == cleanupGeneration) transactionResult(result)
+            }
+        }
+    }
+
+    suspend fun validateAndDiscover(
+        draft: ProviderDraft,
+        secret: String,
+        confirmedHost: String,
+    ): SettingsOperation = validateAndDiscoverInternal(
+        draft, ErasableSecret(secret.toCharArray()), confirmedHost, ++setupGeneration, {},
+    )
+
+    private suspend fun validateAndDiscoverInternal(
+        draft: ProviderDraft,
+        secret: ErasableSecret,
+        confirmedHost: String,
+        generation: Long,
+        onSecretAccepted: () -> Unit,
+    ): SettingsOperation {
+        val abandoned = abandonEditor(invalidateGeneration = false)
+        if (abandoned !is SettingsOperation.Success) return abandoned
+        if (generation != setupGeneration) return SettingsOperation.Failed(SettingsError.Cancelled)
+        val normalizedBaseUrl = try { normalizeBaseUrl(draft.baseUrl) } catch (_: IllegalArgumentException) {
+            return fail(SettingsError.InvalidEndpoint, SettingsOperation.InvalidEndpoint())
+        }
+        val host = URI(normalizedBaseUrl).host
+        if (!host.equals(confirmedHost.trim(), ignoreCase = true)) {
+            return SettingsOperation.HostConfirmationRequired(host)
+        }
+        val existing = mutableState.value.profiles.firstOrNull { it.configuration.id == draft.id }?.configuration
+        val candidate = when (val begin = acceptCandidate(secret, draft.id, existing?.credentialAlias)) {
+                is CredentialTransactionResult.Success -> begin.value?.also {
+                    if (generation == setupGeneration) onSecretAccepted()
+                }
+                CredentialTransactionResult.CredentialUnavailable -> return fail(SettingsError.CredentialUnavailable)
+                CredentialTransactionResult.StorageUnavailable -> return fail(SettingsError.StorageUnavailable)
+                CredentialTransactionResult.InconsistentStorage -> return fail(SettingsError.InconsistentStorage)
+        }
+        val alias = candidate?.candidateAlias ?: existing?.credentialAlias
+            ?: return fail(SettingsError.CredentialUnavailable)
+        val temporary = ProviderConfiguration(
+            draft.id, draft.type, draft.displayName.trim(), normalizedBaseUrl, alias, null,
+            draft.enabled, draft.capabilities,
+        )
+        if (generation != setupGeneration) {
+            if (candidate != null) credentialTransactions.abandon(candidate)
+            return SettingsOperation.Failed(SettingsError.Cancelled)
+        }
+        pendingValidation = PendingValidation(temporary, candidate, generation)
+        mutableState.value = mutableState.value.copy(
+            setupStage = ProviderSetupStage.CREDENTIAL_VALIDATION,
+            confirmedHost = host,
+            discoveredModels = emptyList(),
+            selectedDiscoveredModelId = null,
+            manualModelAllowed = false,
+            discoveryError = null,
+            error = null,
+        )
+        return try {
+            when (val discovery = providerFactory.create(temporary).listModels()) {
+                is ModelDiscoveryResult.Success -> {
+                    if (generation != setupGeneration) return SettingsOperation.Failed(SettingsError.Cancelled)
+                    val models = discovery.models.distinctBy { it.id }.sortedBy { it.id }
+                    if (models.isEmpty()) enableManualFallback(generation)
+                    else {
+                        mutableState.value = mutableState.value.copy(
+                            setupStage = ProviderSetupStage.MODEL_SELECTION,
+                            discoveredModels = models,
+                            selectedDiscoveredModelId = models.first().id,
+                        )
+                        SettingsOperation.Success
+                    }
+                }
+                ModelDiscoveryResult.Unsupported -> enableManualFallback(generation)
+                is ModelDiscoveryResult.Failed -> failDiscovery(discovery.error, generation)
+            }
+        } catch (_: TimeoutCancellationException) {
+            failDiscovery(ModelError.Timeout, generation)
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                if (generation == setupGeneration) failDiscovery(ModelError.Cancelled, generation)
+            }
+            throw cancelled
+        } catch (_: Exception) {
+            failDiscovery(ModelError.Network(), generation)
+        }
+    }
+
+    suspend fun validateManualModel(modelId: String): SettingsOperation =
+        validateManualModel(pendingValidation?.generation ?: setupGeneration, modelId)
+
+    private suspend fun validateManualModel(generation: Long, modelId: String): SettingsOperation {
+        val pending = pendingValidation ?: return fail(SettingsError.StorageUnavailable)
+        if (pending.generation != generation || generation != setupGeneration) return fail(SettingsError.Cancelled)
+        if (!mutableState.value.manualModelAllowed || modelId.isBlank()) return fail(SettingsError.InvalidEndpoint)
+        val configuration = pending.profile.copy(defaultModelId = modelId.trim())
+        return try {
+            when (val validation = withTimeout(10_000) {
+                providerFactory.create(configuration).validate(configuration)
+            }) {
+                ValidationResult.Valid -> {
+                    if (generation != setupGeneration) return SettingsOperation.Failed(SettingsError.Cancelled)
+                    pendingValidation = pending.copy(profile = configuration)
+                    mutableState.value = mutableState.value.copy(
+                        setupStage = ProviderSetupStage.MODEL_SELECTION,
+                        discoveredModels = listOf(ModelDescriptor(modelId.trim(), modelId.trim(), configuration.capabilities)),
+                        selectedDiscoveredModelId = modelId.trim(),
+                        manualModelAllowed = false,
+                        discoveryError = null,
+                        error = null,
+                    )
+                    SettingsOperation.Success
+                }
+                is ValidationResult.Invalid -> failDiscovery(validation.error, generation)
+            }
+        } catch (_: TimeoutCancellationException) {
+            failDiscovery(ModelError.Timeout, generation)
+        } catch (cancelled: CancellationException) {
+            withContext(NonCancellable) {
+                if (generation == setupGeneration) failDiscovery(ModelError.Cancelled, generation)
+            }
+            throw cancelled
+        } catch (_: Exception) {
+            failDiscovery(ModelError.Network(), generation)
+        }
+    }
+
+    fun selectDiscoveredModel(modelId: String) {
+        if (mutableState.value.discoveredModels.any { it.id == modelId }) {
+            mutableState.value = mutableState.value.copy(selectedDiscoveredModelId = modelId)
+        }
+    }
+
+    suspend fun saveValidatedProfile(): SettingsOperation {
+        val pending = pendingValidation ?: return fail(SettingsError.StorageUnavailable)
+        if (pending.generation != setupGeneration) return fail(SettingsError.Cancelled)
+        val modelId = mutableState.value.selectedDiscoveredModelId ?: return fail(SettingsError.InvalidEndpoint)
+        val profile = pending.profile.copy(defaultModelId = modelId)
+        val result = pending.candidate?.let { credentialTransactions.commit(it, profile) }
+            ?: credentialTransactions.commitMetadata(profile, selectionRequested = true)
+        return when (result) {
+            is CredentialTransactionResult.Success -> {
+                replaceProfile(profile)
+                mutableState.value = mutableState.value.copy(selectedProfileId = profile.id)
+                pendingValidation = null
+                SettingsOperation.Success
+            }
+            CredentialTransactionResult.CredentialUnavailable -> fail(SettingsError.CredentialUnavailable)
+            CredentialTransactionResult.StorageUnavailable -> fail(SettingsError.StorageUnavailable)
+            CredentialTransactionResult.InconsistentStorage -> fail(SettingsError.InconsistentStorage)
+        }
+    }
+
+    suspend fun abandonEditor(invalidateGeneration: Boolean = true): SettingsOperation {
+        if (invalidateGeneration) setupGeneration++
+        val candidate = pendingValidation?.candidate
+        pendingValidation = null
+        val cleanup = if (candidate != null) credentialTransactions.abandon(candidate) else CredentialTransactionResult.Success(Unit)
+        resetSetupState()
+        return transactionResult(cleanup)
+    }
+
+    private fun resetSetupState() {
+        mutableState.value = mutableState.value.copy(
+            setupStage = ProviderSetupStage.ENDPOINT,
+            confirmedHost = null,
+            discoveredModels = emptyList(),
+            selectedDiscoveredModelId = null,
+            manualModelAllowed = false,
+            discoveryError = null,
+        )
+    }
+
+    private suspend fun acceptCandidate(
+        submission: ErasableSecret,
+        profileId: String,
+        priorAlias: String?,
+    ): CredentialTransactionResult<CandidateCredential?> {
+        val secret = submission.consume()
+        if (secret.isBlank()) return CredentialTransactionResult.Success(null)
+        return when (val result = credentialTransactions.begin(profileId, priorAlias, true, secret)) {
+            is CredentialTransactionResult.Success -> CredentialTransactionResult.Success(result.value)
+            CredentialTransactionResult.CredentialUnavailable -> CredentialTransactionResult.CredentialUnavailable
+            CredentialTransactionResult.StorageUnavailable -> CredentialTransactionResult.StorageUnavailable
+            CredentialTransactionResult.InconsistentStorage -> CredentialTransactionResult.InconsistentStorage
+        }
+    }
+
+    private fun enableManualFallback(generation: Long): SettingsOperation {
+        if (generation != setupGeneration) return SettingsOperation.Failed(SettingsError.Cancelled)
+        mutableState.value = mutableState.value.copy(manualModelAllowed = true, discoveryError = null)
+        return SettingsOperation.ManualModelRequired
+    }
+
+    private suspend fun failDiscovery(error: ModelError, generation: Long): SettingsOperation {
+        val pending = pendingValidation?.takeIf { it.generation == generation }
+        val candidate = pending?.candidate
+        if (pending != null) pendingValidation = null
+        val cleanup = if (candidate != null) withContext(NonCancellable) {
+            credentialTransactions.abandon(candidate)
+        } else CredentialTransactionResult.Success(Unit)
+        if (generation != setupGeneration) return SettingsOperation.Failed(SettingsError.Cancelled)
+        val mapped = when (error) {
+            is ModelError.Authentication -> SettingsError.Authentication
+            is ModelError.Authorization -> SettingsError.Authorization
+            is ModelError.RateLimited -> SettingsError.RateLimited
+            is ModelError.Network, is ModelError.Server -> SettingsError.Network
+            ModelError.Timeout -> SettingsError.Timeout
+            ModelError.Cancelled -> SettingsError.Cancelled
+            else -> SettingsError.InvalidResponse
+        }
+        mutableState.value = mutableState.value.copy(discoveryError = error)
+        if (cleanup !is CredentialTransactionResult.Success) return transactionResult(cleanup)
+        return fail(mapped)
+    }
+
+    fun updateEditor(editor: ProviderEditorUiState) {
+        invalidatePendingSetup()
+        mutableState.value = mutableState.value.copy(editor = editor)
+    }
+
+    fun reviewEndpoint(): SettingsOperation {
+        val host = try { URI(normalizeBaseUrl(mutableState.value.editor.baseUrl)).host } catch (_: Exception) {
+            return fail(SettingsError.InvalidEndpoint, SettingsOperation.InvalidEndpoint())
+        }
+        if (mutableState.value.editor.displayName.isBlank()) {
+            return fail(SettingsError.InvalidEndpoint, SettingsOperation.InvalidEndpoint())
+        }
+        mutableState.value = mutableState.value.copy(
+            setupStage = ProviderSetupStage.CREDENTIAL_VALIDATION,
+            confirmedHost = host,
+            error = null,
+        )
+        return SettingsOperation.Success
+    }
 
     fun applyPreset(kind: PresetKind, localizedName: String) {
+        invalidatePendingSetup()
         val preset = mutableState.value.presets.first { it.kind == kind }
         mutableState.value = mutableState.value.copy(editor = ProviderEditorUiState(
             type = preset.type,
@@ -118,6 +413,7 @@ class ProviderSettingsViewModel(
 
     fun editProfile(id: String) {
         val profile = profile(id) ?: return
+        invalidatePendingSetup()
         mutableState.value = mutableState.value.copy(editor = ProviderEditorUiState(
             id = profile.id,
             type = profile.type,
@@ -329,8 +625,52 @@ class ProviderSettingsViewModel(
         return operation
     }
 
+    private fun transactionResult(result: CredentialTransactionResult<*>): SettingsOperation = when (result) {
+        is CredentialTransactionResult.Success -> SettingsOperation.Success
+        CredentialTransactionResult.CredentialUnavailable -> fail(SettingsError.CredentialUnavailable)
+        CredentialTransactionResult.StorageUnavailable -> fail(SettingsError.StorageUnavailable)
+        CredentialTransactionResult.InconsistentStorage -> fail(SettingsError.InconsistentStorage)
+    }
+
+    private fun invalidatePendingSetup() {
+        val cleanupGeneration = ++setupGeneration
+        val job = activeSetupJob
+        activeSetupJob = null
+        job?.cancel()
+        val candidate = pendingValidation?.candidate
+        pendingValidation = null
+        resetSetupState()
+        mutableState.value = mutableState.value.copy(setupInProgress = false)
+        if (candidate != null) viewModelScope.launch {
+            val result = withContext(NonCancellable) { credentialTransactions.abandon(candidate) }
+            if (setupGeneration == cleanupGeneration) transactionResult(result)
+        }
+    }
+
+    private fun launchSetupOperation(
+        generation: Long = ++setupGeneration,
+        block: suspend (Long) -> Unit,
+    ): Job? {
+        if (mutableState.value.operationInProgress || mutableState.value.setupInProgress) return null
+        mutableState.value = mutableState.value.copy(setupInProgress = true)
+        lateinit var job: Job
+        job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                block(generation)
+            } finally {
+                if (activeSetupJob === job && generation == setupGeneration) {
+                    activeSetupJob = null
+                    mutableState.value = mutableState.value.copy(setupInProgress = false)
+                }
+            }
+        }
+        activeSetupJob = job
+        job.start()
+        return job
+    }
+
     private fun launchOperation(block: suspend () -> Unit) {
-        if (mutableState.value.operationInProgress) return
+        if (!mutableState.value.controlsEnabled) return
         mutableState.value = mutableState.value.copy(operationInProgress = true)
         viewModelScope.launch {
             try {
