@@ -8,7 +8,7 @@ android {
     compileSdk {
         version = release(36) { minorApiLevel = 1 }
     }
-    defaultConfig { minSdk = 36 }
+    defaultConfig { minSdk = 33 }
 }
 
 dependencies {

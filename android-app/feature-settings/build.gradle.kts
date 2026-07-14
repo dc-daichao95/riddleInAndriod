@@ -7,7 +7,7 @@ android {
     namespace = "dev.riddle.magicpaper.settings"
     buildToolsVersion = "36.1.0"
     compileSdk { version = release(36) { minorApiLevel = 1 } }
-    defaultConfig { minSdk = 36 }
+    defaultConfig { minSdk = 33 }
     buildFeatures { compose = true }
 }
 

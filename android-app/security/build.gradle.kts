@@ -4,7 +4,7 @@ android {
     namespace = "dev.riddle.magicpaper.security"
     buildToolsVersion = "36.1.0"
     compileSdk { version = release(36) { minorApiLevel = 1 } }
-    defaultConfig { minSdk = 36 }
+    defaultConfig { minSdk = 33 }
 }
 
 dependencies {

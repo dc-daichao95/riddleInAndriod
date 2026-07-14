@@ -14,7 +14,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.riddle.magicpaper"
-        minSdk = 36
+        minSdk = 33
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
