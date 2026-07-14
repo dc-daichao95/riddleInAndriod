@@ -142,6 +142,7 @@ class PaperPipelineTest {
             orchestratorFactory = ::ConversationOrchestrator,
             savedStateHandle = SavedStateHandle(),
             workerDispatcher = dispatcher,
+            clock = TestAppClock(dispatcher.scheduler),
         )
         draw(viewModel)
         advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
@@ -165,6 +166,7 @@ class PaperPipelineTest {
         orchestratorFactory = ::ConversationOrchestrator,
         savedStateHandle = SavedStateHandle(),
         workerDispatcher = dispatcher,
+        clock = TestAppClock(dispatcher.scheduler),
     )
 
     private fun draw(viewModel: PaperViewModel) {

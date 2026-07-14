@@ -42,9 +42,10 @@
 
 **Files:** `AppClock`, `AppContainer.kt`, `PaperViewModel.kt`, timing/lifecycle tests.
 
-- [ ] Add failing fake-clock tests proving wall-clock changes do not affect inactivity/animation deadlines and final `ViewModel.onCleared()` cancels active work.
+- [ ] Add failing fake-clock tests proving wall-clock changes do not affect the inactivity deadline or reusable deadline calculation/waiting, and final `ViewModel.onCleared()` cancels active work.
 - [ ] Run `./gradlew :feature-paper:testDebugUnitTest --tests '*Clock*' --tests '*Lifecycle*'`; RED is use of `currentTimeMillis` and missing final-teardown evidence.
 - [ ] Inject `SystemClock.elapsedRealtime()` through `AppClock`; keep configuration recreation on the Activity ViewModelStore.
+- [ ] R1c introduces and verifies the reusable `MonotonicDeadline` boundary for inactivity only. No dissolve, reply-playback, or linger deadline exists yet; do not claim animation-deadline coverage in this slice.
 - [ ] Re-run targeted tests and commit only clock/lifecycle changes.
 
 ## R2a: Typed discovery SPI and both adapter contracts
@@ -85,6 +86,7 @@
 - [ ] Run `./gradlew :conversation:testDebugUnitTest --tests '*MlKitHandwritingRecognizerTest*' --tests '*RecognitionProvisioningTest*'`; RED is no download coordinator.
 - [ ] Implement application-scope shared work exactly as specified; never block the main thread or infer behavior from Provider/model names.
 - [ ] Add localized visible preparation/recognition/failure states while retaining source ink.
+- [ ] Recognition provisioning adds no animation deadline. The later dissolve and reply/linger slices must reuse R1c `MonotonicDeadline`; do not add an independent wall-clock timer here.
 - [ ] Re-run conversation/feature-paper tests and commit only recognition slice files.
 
 ## R4a: Real 14-stage input dissolve
@@ -92,6 +94,7 @@
 **Files:** render model/cache/View/ViewModel and dissolve tests.
 
 - [ ] Add failing stage tests observing exactly 0..13, retaining strokes through stage 13, and clearing after it; add bitmap tests for monotonically decreasing nontransparent coverage and failure/cancellation restoration.
+- [ ] Before implementation, add RED tests for dissolve deadlines covering wall-clock forward/backward jumps, elapsed-time just-before/at-boundary behavior, cancellation, and recreation recovery. Every dissolve wait must reuse R1c `MonotonicDeadline`.
 - [ ] Run `./gradlew :paper-engine:testDebugUnitTest :feature-paper:testDebugUnitTest --tests '*Dissolve*'`; RED is the current static stage-0 empty model.
 - [ ] Implement generation-scoped staged dissolve. Normal delay is controlled by fake clock; reduced motion emits all stages with zero inter-stage delay.
 - [ ] Re-run tests and commit only dissolve files.
@@ -120,6 +123,8 @@
 ## R5b: Reply playback, page lifecycle, and recovery
 
 **Files:** render model/View/ViewModel/screen; memory Room v2 entity/DAO/database/schema/migration/repository; interrupted-run mapping; playback/lifecycle/unit/migration tests.
+
+- [ ] Before implementation, add RED tests for reply-playback and linger deadlines covering wall-clock forward/backward jumps, elapsed-time just-before/at-boundary behavior, cancellation, configuration recreation, and process recovery. Every playback/linger wait must reuse R1c `MonotonicDeadline`.
 
 - [ ] Add failing tests proving the first delta creates View pixels before completion; later deltas preserve cursor/pixels; pages write→linger 4–20 s→stages 0..9→next page; final page returns Listening; new writing/cancel rejects late events.
 - [ ] Add failing recreation tests during input dissolve, reply playback, and linger. Add process-death tests proving no request replay, draft restoration, interrupted state, and non-animated partial reply strokes.

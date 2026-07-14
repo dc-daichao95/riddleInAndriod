@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 enum class PaperPhase { Listening, Preparing, Thinking, Streaming, Completed, Cancelled, Interrupted, Failed }
 
@@ -71,13 +72,18 @@ class PaperViewModel(
     private val savedStateHandle: SavedStateHandle,
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val questionMarkClassifier: QuestionMarkClassifier = QuestionMarkClassifier(),
-    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val clock: AppClock = object : AppClock {
+        override fun elapsedRealtimeMillis() = System.nanoTime() / 1_000_000L
+        override fun wallClockMillis() = System.currentTimeMillis()
+    },
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(PaperUiState())
     val state: StateFlow<PaperUiState> = mutableState.asStateFlow()
     private val mutableEffects = MutableSharedFlow<PaperEffect>(extraBufferCapacity = 1)
     val effects: SharedFlow<PaperEffect> = mutableEffects.asSharedFlow()
     private val turnGeneration = AtomicLong()
+    private val draftRevision = AtomicLong()
+    private val latestDraftWrite = AtomicReference<DraftWrite?>()
     private val persistenceMutex = Mutex()
 
     private var activeStroke: MutableStroke? = null
@@ -86,9 +92,12 @@ class PaperViewModel(
     private var settingsOpen = false
 
     init {
+        val recoveryBaselineRevision = draftRevision.get()
+        val recoveryRunToken = savedStateHandle.get<Long>(RUN_TOKEN_KEY)
+        val recoveryLegacyActive = savedStateHandle.get<Boolean>(ACTIVE_TURN_KEY) == true
         viewModelScope.launch(workerDispatcher) {
             val recovered = persistenceMutex.withLock { persistence.load() }
-            val wasActive = recovered.interrupted || savedStateHandle.get<Boolean>(ACTIVE_TURN_KEY) == true
+            val wasActive = recovered.interrupted || recoveryRunToken != null || recoveryLegacyActive
             mutableState.update { current ->
                 if (current.renderModel.strokes.isNotEmpty() || current.phase != PaperPhase.Listening) current
                 else current.copy(
@@ -97,8 +106,20 @@ class PaperViewModel(
                 )
             }
             if (wasActive) {
-                savedStateHandle[ACTIVE_TURN_KEY] = false
-                persistenceMutex.withLock { persistence.saveDraft(recovered.copy(interrupted = false)) }
+                persistenceMutex.withLock {
+                    val tokenStillOwned = recoveryRunToken != null && currentRunToken() == recoveryRunToken
+                    val legacyStillOwned = recoveryRunToken == null && recoveryLegacyActive && currentRunToken() == null
+                    val recoveryStillOwned = when {
+                        recoveryRunToken != null -> tokenStillOwned
+                        recoveryLegacyActive -> legacyStillOwned
+                        else -> recovered.interrupted && currentRunToken() == null
+                    }
+                    if (recoveryBaselineRevision == draftRevision.get() && recoveryStillOwned) {
+                        persistence.saveDraft(recovered.copy(interrupted = false))
+                        compareAndClearRunToken(recoveryRunToken)
+                        savedStateHandle[ACTIVE_TURN_KEY] = false
+                    }
+                }
             }
         }
         viewModelScope.launch(workerDispatcher) {
@@ -177,8 +198,9 @@ class PaperViewModel(
         inactivityJob?.cancel()
         if (settingsOpen || mutableState.value.helpVisible || mutableState.value.renderModel.strokes.isEmpty()) return
         val generation = turnGeneration.incrementAndGet()
+        val deadline = clock.deadlineAfter(INACTIVITY_MILLIS)
         inactivityJob = viewModelScope.launch(workerDispatcher) {
-            delay(INACTIVITY_MILLIS)
+            deadline.await()
             activeTurnJob = this.coroutineContext[Job]
             runTurn(generation)
         }
@@ -186,6 +208,7 @@ class PaperViewModel(
 
     private suspend fun runTurn(generation: Long) {
         val strokes = mutableState.value.renderModel.strokes
+        val runDraftRevision = draftRevision.get()
         if (strokes.isEmpty() || settingsOpen || generation != turnGeneration.get()) return
         if (questionMarkClassifier.isLargeQuestionMark(strokes)) {
             mutableState.update { it.copy(helpVisible = true, phase = PaperPhase.Listening) }
@@ -193,17 +216,42 @@ class PaperViewModel(
         }
 
         var pageImage: RasterizedPage? = null
+        var markerAttempted = false
         try {
             val page = ConversationPage("active-page", hasVisibleInk = true)
-            var conversationState: ConversationState = ConversationState.Listening(page, nowMillis() - INACTIVITY_MILLIS)
-            val commit = stateMachine.transition(conversationState, ConversationInput.Tick(nowMillis()))
+            val committedAtMillis = clock.elapsedRealtimeMillis()
+            var conversationState: ConversationState = ConversationState.Listening(
+                page,
+                committedAtMillis - INACTIVITY_MILLIS,
+            )
+            val commit = stateMachine.transition(
+                conversationState,
+                ConversationInput.Tick(committedAtMillis),
+            )
             conversationState = commit.state
             check(conversationState is ConversationState.Drinking)
             mutableState.update {
                 it.copy(renderModel = PaperRenderModel(emptyList(), dissolveStage = 0), phase = PaperPhase.Preparing, reply = "")
             }
-            savedStateHandle[ACTIVE_TURN_KEY] = true
-            persistenceMutex.withLock { persistence.markStreaming(strokes) }
+            awaitDraftWrite(runDraftRevision)
+            val markerPersisted = persistenceMutex.withLock {
+                if (!isCurrentRun(generation, runDraftRevision)) return@withLock false
+                markerAttempted = true
+                persistence.markStreaming(strokes)
+                if (isCurrentRun(generation, runDraftRevision)) {
+                    savedStateHandle[RUN_TOKEN_KEY] = generation
+                    savedStateHandle[ACTIVE_TURN_KEY] = false
+                    true
+                } else {
+                    if (runDraftRevision == draftRevision.get()) {
+                        persistence.saveDraft(PaperRecovery(strokes, interrupted = false))
+                        compareAndClearRunToken(generation)
+                        savedStateHandle[ACTIVE_TURN_KEY] = false
+                    }
+                    false
+                }
+            }
+            if (!markerPersisted) return
 
             val selected = modelSelection.selected()
             check(selected.capabilities.streaming) { "Selected model does not support streaming" }
@@ -241,8 +289,14 @@ class PaperViewModel(
                             conversationState,
                             ConversationInput.ProviderEvent(ModelEvent.Completed(effect.reason)),
                         ).state
-                        persistenceMutex.withLock { persistence.clearStreamingAndDraft() }
-                        savedStateHandle[ACTIVE_TURN_KEY] = false
+                        val cleared = persistenceMutex.withLock {
+                            if (!isOwnedRun(generation, runDraftRevision)) return@withLock false
+                            persistence.clearStreamingAndDraft()
+                            compareAndClearRunToken(generation)
+                            savedStateHandle[ACTIVE_TURN_KEY] = false
+                            isCurrentRun(generation, runDraftRevision)
+                        }
+                        if (!cleared) return@collect
                         mutableState.update { it.copy(phase = PaperPhase.Completed) }
                         completed = true
                     }
@@ -253,19 +307,16 @@ class PaperViewModel(
             if (!completed) throw IllegalStateException("Provider stream ended without completion")
         } catch (cancelled: CancellationException) {
             withContext(NonCancellable) {
-                if (savedStateHandle.get<Boolean>(ACTIVE_TURN_KEY) == true) {
-                    savedStateHandle[ACTIVE_TURN_KEY] = false
-                    val currentStrokes = mutableState.value.renderModel.strokes
-                    persistenceMutex.withLock {
-                        persistence.saveDraft(PaperRecovery(currentStrokes, interrupted = false))
-                    }
+                persistenceMutex.withLock {
+                    cleanInterruptedRunBestEffort(generation, runDraftRevision, strokes, markerAttempted)
                 }
             }
             throw cancelled
         } catch (_: Exception) {
-            if (generation == turnGeneration.get()) {
-                savedStateHandle[ACTIVE_TURN_KEY] = false
-                persistenceMutex.withLock { persistence.saveDraft(PaperRecovery(strokes, interrupted = false)) }
+            persistenceMutex.withLock {
+                cleanInterruptedRunBestEffort(generation, runDraftRevision, strokes, markerAttempted)
+            }
+            if (isCurrentRun(generation, runDraftRevision)) {
                 mutableState.update { current ->
                     current.copy(
                         phase = PaperPhase.Failed,
@@ -299,9 +350,71 @@ class PaperViewModel(
     }
 
     private fun persistDraft(strokes: List<PaperStroke>) {
-        viewModelScope.launch(workerDispatcher) {
-            persistenceMutex.withLock { persistence.saveDraft(PaperRecovery(strokes, interrupted = false)) }
+        val revision = draftRevision.incrementAndGet()
+        val write = DraftWrite(revision, CompletableDeferred())
+        latestDraftWrite.set(write)
+        val supersededRunToken = currentRunToken()
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var result: Result<Unit> = Result.success(Unit)
+            try {
+                withContext(NonCancellable + workerDispatcher) {
+                    persistenceMutex.withLock {
+                        if (revision == draftRevision.get()) {
+                            persistence.saveDraft(PaperRecovery(strokes, interrupted = false))
+                            compareAndClearRunToken(supersededRunToken)
+                            savedStateHandle[ACTIVE_TURN_KEY] = false
+                        }
+                    }
+                }
+            } catch (failure: Exception) {
+                result = Result.failure(failure)
+            } finally {
+                write.ack.complete(result)
+            }
         }
+    }
+
+    private suspend fun awaitDraftWrite(revision: Long) {
+        latestDraftWrite.get()?.takeIf { it.revision == revision }?.ack?.await()?.getOrThrow()
+    }
+
+    private fun isCurrentRun(generation: Long, revision: Long): Boolean =
+        generation == turnGeneration.get() && revision == draftRevision.get()
+
+    private fun isOwnedRun(generation: Long, revision: Long): Boolean =
+        isCurrentRun(generation, revision) && currentRunToken() == generation
+
+    private fun currentRunToken(): Long? = savedStateHandle.get(RUN_TOKEN_KEY)
+
+    private fun compareAndClearRunToken(ownerToken: Long?) {
+        if (ownerToken != null && currentRunToken() == ownerToken) {
+            savedStateHandle.remove<Long>(RUN_TOKEN_KEY)
+        }
+    }
+
+    private suspend fun cleanInterruptedRunBestEffort(
+        generation: Long,
+        revision: Long,
+        strokes: List<PaperStroke>,
+        markerAttempted: Boolean,
+    ) {
+        if (revision != draftRevision.get()) return
+        val token = currentRunToken()
+        if (token != generation && !(markerAttempted && token == null)) return
+        try {
+            persistence.saveDraft(PaperRecovery(strokes, interrupted = false))
+            compareAndClearRunToken(generation)
+            savedStateHandle[ACTIVE_TURN_KEY] = false
+        } catch (_: Exception) {
+            // Keep the marker/token recoverable and preserve the triggering failure or cancellation.
+        }
+    }
+
+    override fun onCleared() {
+        turnGeneration.incrementAndGet()
+        inactivityJob?.cancel()
+        activeTurnJob?.cancel()
+        super.onCleared()
     }
 
     private fun RasterizedPage.dataUrl(): String = FileInputStream(file).use { input ->
@@ -309,11 +422,13 @@ class PaperViewModel(
     }
 
     private data class MutableStroke(val id: String, val tool: PaperTool, val points: MutableList<NormalizedPoint>)
+    private data class DraftWrite(val revision: Long, val ack: CompletableDeferred<Result<Unit>>)
     private class ProviderStreamFailure(val error: ModelError) : Exception("Provider stream failed")
 
     companion object {
         const val INACTIVITY_MILLIS = 2_800L
         private const val ACTIVE_TURN_KEY = "paper_active_turn"
+        private const val RUN_TOKEN_KEY = "paper_active_run_token"
         private const val PAGE_IMAGE_PROMPT = "Read and respond to the handwriting in this page image."
     }
 }

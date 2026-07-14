@@ -1,6 +1,7 @@
 package dev.riddle.magicpaper
 
 import android.content.Context
+import android.os.SystemClock
 import androidx.room.Room
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -22,6 +23,7 @@ import dev.riddle.magicpaper.model.ModelProvider
 import dev.riddle.magicpaper.model.ProviderConfiguration
 import dev.riddle.magicpaper.model.ProviderType
 import dev.riddle.magicpaper.paperui.PaperPersistence
+import dev.riddle.magicpaper.paperui.AppClock
 import dev.riddle.magicpaper.paperui.PaperPreferences
 import dev.riddle.magicpaper.paperui.PaperRecovery
 import dev.riddle.magicpaper.paperui.PaperViewModel
@@ -46,8 +48,6 @@ import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONObject
 
-fun interface AppClock { fun nowMillis(): Long }
-
 data class AppDispatchers(
     val io: CoroutineDispatcher = Dispatchers.IO,
     val default: CoroutineDispatcher = Dispatchers.Default,
@@ -55,7 +55,10 @@ data class AppDispatchers(
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
-    val clock: AppClock = AppClock(System::currentTimeMillis)
+    val clock: AppClock = object : AppClock {
+        override fun elapsedRealtimeMillis() = SystemClock.elapsedRealtime()
+        override fun wallClockMillis() = System.currentTimeMillis()
+    }
     val dispatchers = AppDispatchers()
     val httpClient: OkHttpClient = OkHttpModelTransport.defaultClient()
     val database: RiddleDatabase = Room.databaseBuilder(appContext, RiddleDatabase::class.java, "riddle.db").build()
@@ -129,7 +132,7 @@ class AppContainer(context: Context) {
         orchestratorFactory = ::ConversationOrchestrator,
         savedStateHandle = savedStateHandle,
         workerDispatcher = dispatchers.default,
-        nowMillis = clock::nowMillis,
+        clock = clock,
     )
 }
 
@@ -144,11 +147,11 @@ private class RoomPaperPersistence(
         return PaperRecovery(draft?.strokes.orEmpty(), preferences.getBoolean("streaming", false))
     }
     override suspend fun saveDraft(recovery: PaperRecovery) {
-        memory.replaceDraft(DraftPage(clock.nowMillis(), recovery.strokes))
+        memory.replaceDraft(DraftPage(clock.wallClockMillis(), recovery.strokes))
         preferences.edit().putBoolean("streaming", recovery.interrupted).commit()
     }
     override suspend fun markStreaming(strokes: List<dev.riddle.magicpaper.model.PaperStroke>) {
-        memory.replaceDraft(DraftPage(clock.nowMillis(), strokes))
+        memory.replaceDraft(DraftPage(clock.wallClockMillis(), strokes))
         preferences.edit().putBoolean("streaming", true).commit()
     }
     override suspend fun clearStreamingAndDraft() {

@@ -191,6 +191,7 @@ class PaperViewModelTest {
         orchestratorFactory = ::ConversationOrchestrator,
         savedStateHandle = SavedStateHandle(),
         workerDispatcher = dispatcher,
+        clock = TestAppClock(dispatcher.scheduler),
     )
 
     private fun drawStroke(viewModel: PaperViewModel) {
