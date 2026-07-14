@@ -7,7 +7,7 @@ interface ModelProvider {
 
     fun stream(request: ModelRequest): Flow<ModelEvent>
 
-    suspend fun listModels(): Result<List<ModelDescriptor>>
+    suspend fun listModels(): ModelDiscoveryResult
 
     suspend fun validate(configuration: ProviderConfiguration): ValidationResult
 }

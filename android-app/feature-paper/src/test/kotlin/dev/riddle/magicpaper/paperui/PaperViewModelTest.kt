@@ -11,6 +11,7 @@ import dev.riddle.magicpaper.model.FinishReason
 import dev.riddle.magicpaper.model.ModelEvent
 import dev.riddle.magicpaper.model.ModelCapabilities
 import dev.riddle.magicpaper.model.ModelDescriptor
+import dev.riddle.magicpaper.model.ModelDiscoveryResult
 import dev.riddle.magicpaper.model.ModelProvider
 import dev.riddle.magicpaper.model.ModelRequest
 import dev.riddle.magicpaper.model.ProviderConfiguration
@@ -228,9 +229,9 @@ private class CountingProvider : ModelProvider {
         streamedRequest = request
         return flowOf(ModelEvent.Completed(FinishReason.STOP))
     }
-    override suspend fun listModels(): Result<List<ModelDescriptor>> {
+    override suspend fun listModels(): ModelDiscoveryResult {
         listModelsCalls++
-        return Result.success(emptyList())
+        return ModelDiscoveryResult.Success(emptyList())
     }
     override suspend fun validate(configuration: ProviderConfiguration) = ValidationResult.Valid
 }

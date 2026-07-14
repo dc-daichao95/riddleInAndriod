@@ -11,6 +11,7 @@ import java.time.Instant
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class ProviderContractTest {
@@ -120,7 +121,7 @@ class ProviderContractTest {
             TransportResponse.Success(flow { emit("data: [DONE]\n\n".encodeToByteArray()) }),
         ))
         val provider = OpenAiCompatibleProvider(config, transport)
-        assertEquals(listOf("chat"), provider.listModels().getOrThrow().map { it.id })
+        assertEquals(listOf("chat"), assertIs<ModelDiscoveryResult.Success>(provider.listModels()).models.map { it.id })
         val candidate = config.copy(baseUrl = "https://actual-host.test/api")
         assertEquals(ValidationResult.Valid, provider.validate(candidate))
         assertTrue(transport.requests.first().url.startsWith("https://example.test/v1/"))

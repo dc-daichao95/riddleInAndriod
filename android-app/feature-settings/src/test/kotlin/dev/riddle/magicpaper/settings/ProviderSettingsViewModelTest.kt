@@ -364,7 +364,7 @@ private class RecordingFactory(private val validation: ValidationResult) : Provi
         return object : ModelProvider {
             override val descriptor = ProviderDescriptor(configuration.type, configuration.displayName, configuration.capabilities)
             override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
-            override suspend fun listModels() = Result.success(emptyList<ModelDescriptor>())
+            override suspend fun listModels() = ModelDiscoveryResult.Success(emptyList<ModelDescriptor>())
             override suspend fun validate(configuration: ProviderConfiguration): ValidationResult {
                 validationInputs += configuration
                 return validation

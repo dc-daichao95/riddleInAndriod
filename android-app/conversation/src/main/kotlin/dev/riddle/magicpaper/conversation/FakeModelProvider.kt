@@ -2,6 +2,7 @@ package dev.riddle.magicpaper.conversation
 
 import dev.riddle.magicpaper.model.ModelCapabilities
 import dev.riddle.magicpaper.model.ModelDescriptor
+import dev.riddle.magicpaper.model.ModelDiscoveryResult
 import dev.riddle.magicpaper.model.ModelEvent
 import dev.riddle.magicpaper.model.ModelProvider
 import dev.riddle.magicpaper.model.ModelRequest
@@ -34,7 +35,7 @@ class FakeModelProvider(
         eventFactory(request).collect(::emit)
     }
 
-    override suspend fun listModels(): Result<List<ModelDescriptor>> = Result.success(
+    override suspend fun listModels(): ModelDiscoveryResult = ModelDiscoveryResult.Success(
         listOf(ModelDescriptor("fake", "Fake", descriptor.capabilities)),
     )
 

@@ -1,18 +1,25 @@
 package dev.riddle.magicpaper.provider
 
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.time.Duration
-import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 enum class TransportMethod { GET, POST }
@@ -33,8 +40,15 @@ data class TransportRequest(
 
 sealed interface TransportResponse {
     data class Success(val chunks: Flow<ByteArray>) : TransportResponse
-    data class HttpFailure(val statusCode: Int, val headers: Map<String, String> = emptyMap(), val errorBody: String? = null) : TransportResponse
+    data class HttpFailure(
+        val statusCode: Int,
+        val headers: Map<String, String> = emptyMap(),
+        val errorBody: String? = null,
+        val errorBodyLimitExceeded: Boolean = false,
+    ) : TransportResponse
     data class NetworkFailure(val message: String?) : TransportResponse
+    data object TimeoutFailure : TransportResponse
+    data object CancelledFailure : TransportResponse
 }
 
 fun interface ModelTransport { fun stream(request: TransportRequest): Flow<TransportResponse> }
@@ -44,6 +58,8 @@ class OkHttpModelTransport(
     private val credentials: CredentialSource,
     private val client: OkHttpClient = defaultClient(),
     internal val callCreated: (okhttp3.Call) -> Unit = {},
+    private val blockingDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val cancellationDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ModelTransport {
     override fun stream(request: TransportRequest): Flow<TransportResponse> = flow {
         val credential = credentials.get(request.credentialAlias)
@@ -64,30 +80,44 @@ class OkHttpModelTransport(
                         if (continuation.isActive) continuation.resumeWithException(e)
                     }
                     override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                        if (continuation.isActive) continuation.resume(response) else response.close()
+                        if (continuation.isActive) {
+                            continuation.resume(response) { _, discardedResponse, _ -> discardedResponse.close() }
+                        } else response.close()
                     }
                 })
             }
-            if (!response.isSuccessful) {
-                val headers = response.headers.toMultimap().mapValues { it.value.firstOrNull().orEmpty() }
-                val errorBody = response.body.source().use { source ->
-                    source.request(16_385L)
-                    source.readByteString(minOf(16_384L, source.buffer.size)).utf8()
-                }.replace(credential, "[REDACTED]")
-                response.close()
-                emit(TransportResponse.HttpFailure(response.code, headers, errorBody))
-            } else {
-                emit(TransportResponse.Success(flow {
-                    response.use {
-                        val source = it.body.source()
-                        val buffer = Buffer()
-                        while (currentCoroutineContext().isActive && !source.exhausted()) {
-                            val count = source.read(buffer, 8192)
-                            if (count > 0) emit(buffer.readByteArray(count))
+            withCancellationWatcher(call, response) {
+                if (!response.isSuccessful) {
+                    val headers = response.headers.toMultimap().mapValues { it.value.firstOrNull().orEmpty() }
+                    val (errorBody, errorBodyLimitExceeded) = withContext(blockingDispatcher) {
+                        response.body.source().use { source ->
+                            val exceeded = source.request(ERROR_BODY_LIMIT_BYTES + 1L)
+                            val text = source.readByteString(minOf(ERROR_BODY_LIMIT_BYTES.toLong(), source.buffer.size)).utf8()
+                            text.replace(credential, "[REDACTED]") to exceeded
                         }
                     }
-                }))
+                    response.close()
+                    emit(TransportResponse.HttpFailure(response.code, headers, errorBody, errorBodyLimitExceeded))
+                } else {
+                    emit(TransportResponse.Success(flow {
+                        response.use {
+                            val source = it.body.source()
+                            val buffer = Buffer()
+                            while (currentCoroutineContext().isActive) {
+                                val bytes = withContext(blockingDispatcher) {
+                                    if (source.exhausted()) null else {
+                                        val count = source.read(buffer, 8192)
+                                        if (count > 0) buffer.readByteArray(count) else byteArrayOf()
+                                    }
+                                } ?: break
+                                if (bytes.isNotEmpty()) emit(bytes)
+                            }
+                        }
+                    }))
+                }
             }
+        } catch (error: SocketTimeoutException) {
+            if (currentCoroutineContext().isActive) emit(TransportResponse.TimeoutFailure) else throw error
         } catch (error: IOException) {
             if (currentCoroutineContext().isActive) emit(TransportResponse.NetworkFailure(error.message)) else throw error
         } finally {
@@ -95,7 +125,29 @@ class OkHttpModelTransport(
         }
     }
 
+    private suspend fun withCancellationWatcher(
+        call: okhttp3.Call,
+        response: okhttp3.Response,
+        block: suspend () -> Unit,
+    ) = coroutineScope {
+        val watcher = launch(cancellationDispatcher, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                awaitCancellation()
+            } finally {
+                call.cancel()
+                response.close()
+            }
+        }
+        try {
+            block()
+        } finally {
+            watcher.cancel()
+        }
+    }
+
     companion object {
+        private const val ERROR_BODY_LIMIT_BYTES = 64 * 1024
+
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(Duration.ofSeconds(15)).readTimeout(Duration.ofSeconds(60))
             .writeTimeout(Duration.ofSeconds(30)).callTimeout(Duration.ofSeconds(90)).build()

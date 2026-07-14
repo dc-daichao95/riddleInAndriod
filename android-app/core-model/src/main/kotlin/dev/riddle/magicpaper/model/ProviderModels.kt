@@ -101,12 +101,22 @@ enum class FinishReason {
 
 sealed interface ModelError {
     data class Authentication(val message: String? = null) : ModelError
+    data class Authorization(val message: String? = null) : ModelError
     data class InvalidRequest(val message: String? = null) : ModelError
+    data class InvalidResponse(val message: String? = null) : ModelError
+    data class ResponseTooLarge(val limit: Int) : ModelError
     data class RateLimited(val retryAfterMillis: Long? = null) : ModelError
     data class Server(val statusCode: Int) : ModelError
     data class Network(val message: String? = null) : ModelError
+    data object Timeout : ModelError
     data class Parsing(val message: String? = null) : ModelError
     data object Cancelled : ModelError
+}
+
+sealed interface ModelDiscoveryResult {
+    data class Success(val models: List<ModelDescriptor>) : ModelDiscoveryResult
+    data object Unsupported : ModelDiscoveryResult
+    data class Failed(val error: ModelError) : ModelDiscoveryResult
 }
 
 sealed interface ModelEvent {

@@ -5,6 +5,7 @@ import dev.riddle.magicpaper.model.Message
 import dev.riddle.magicpaper.model.MessageRole
 import dev.riddle.magicpaper.model.ModelCapabilities
 import dev.riddle.magicpaper.model.ModelEvent
+import dev.riddle.magicpaper.model.ModelDiscoveryResult
 import dev.riddle.magicpaper.model.ModelRequest
 import dev.riddle.magicpaper.model.ProviderConfiguration
 import dev.riddle.magicpaper.model.ProviderType
@@ -21,7 +22,7 @@ class FakeModelProviderTest {
         val provider = FakeModelProvider(emptyList())
         assertEquals("Deterministic fake", provider.descriptor.displayName)
         assertTrue(provider.descriptor.capabilities.streaming)
-        assertEquals(listOf("fake"), provider.listModels().getOrThrow().map { it.id })
+        assertEquals(listOf("fake"), assertIs<ModelDiscoveryResult.Success>(provider.listModels()).models.map { it.id })
         assertIs<ValidationResult.Valid>(provider.validate(configuration()))
     }
 
