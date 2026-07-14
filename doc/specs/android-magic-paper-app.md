@@ -98,7 +98,7 @@ Additional states cover help, history reconstruction, settings, failure, cancell
 
 ### 5.4 Settings entry and settings UI
 
-- `FR-040`: The default settings entry shall be a three-finger long press held for 2 seconds.
+- `FR-040`: The default settings entry shall be a safe-inset-aware magical rune button; the replaceable three-finger policy remains available but disabled by default.
 - `FR-041`: Entry shall be selected through a `SettingsEntryPolicy` independent of the paper engine.
 - `FR-042`: Future policies may use another gesture, edge entry, or visible control without changing conversation or rendering code.
 - `FR-043`: Entering settings shall pause the inactivity timer.
@@ -115,7 +115,7 @@ Additional states cover help, history reconstruction, settings, failure, cancell
 - `FR-055`: Settings shall include OpenAI and DeepSeek presets.
 - `FR-056`: Settings shall allow custom HTTPS OpenAI-compatible endpoints and model IDs.
 - `FR-057`: Users shall add, edit, validate, enable, select, and delete profiles.
-- `FR-058`: Validation shall use a minimal request and shall not upload the current page.
+- `FR-058`: Validation shall first use authenticated model discovery when supported. An endpoint without discovery may use one explicitly disclosed minimal completion request with no page or conversation content, no automatic retry, a one-token output limit, and a 10-second total timeout.
 - `FR-059`: Shared code shall select behavior from capabilities rather than provider-name conditionals.
 - `FR-060`: Adapters shall normalize text, reasoning, usage, completion, and typed failure events. Tool calls may be parsed but shall not execute.
 - `FR-061`: The app shall never automatically send data to a different Provider after failure.
@@ -208,7 +208,7 @@ The View emits immutable paper intents. A lifecycle-aware ViewModel emits render
 interface ModelProvider {
     val descriptor: ProviderDescriptor
     fun stream(request: ModelRequest): Flow<ModelEvent>
-    suspend fun listModels(): Result<List<ModelDescriptor>>
+    suspend fun discoverModels(): ModelDiscoveryResult
     suspend fun validate(configuration: ProviderConfiguration): ValidationResult
 }
 ```
@@ -273,7 +273,7 @@ Provider credentials remain outside Room. Every schema change requires migration
 - `AC-004`: Given an active stylus, palm contacts create no stroke while pressure changes width.
 - `AC-005`: Given draft and partial animation, rotation preserves geometry and resumes at the prior point.
 - `AC-006`: Given portrait lock, orientation remains portrait; disabling restores sensor rotation.
-- `AC-007`: Given listening paper, three stable fingers for 2 seconds open settings and pause commit without changing the draft.
+- `AC-007`: Given listening paper, tapping the safe-area magical rune opens settings, pauses commit, and preserves the draft; the three-finger gesture works only when its optional entry mode is selected.
 - `AC-008`: Given another `SettingsEntryPolicy`, its trigger opens settings without changing paper or conversation code.
 - `AC-009`: Given a vision model, commit sends a bounded grayscale image without requiring local recognition.
 - `AC-010`: Given a text-only model, commit runs local recognition and sends recognized text plus allowed context.
@@ -293,7 +293,7 @@ Provider credentials remain outside Room. Every schema change requires migration
 | FR-001–008 | paper-engine unit/Robolectric tests and Android stylus tests |
 | FR-010–020 | pure Kotlin state-machine tests with fake clock/Provider |
 | FR-030–036 | coordinate property tests, window-size tests, API 33 and API 36.1 emulators |
-| FR-040–045 | gesture-policy unit and integration touch tests |
+| FR-040–045 | entry-mode, rune semantics/touch-target, optional gesture-policy, and integration tests |
 | FR-050–061 | shared Provider contract fixtures and fake transport tests |
 | FR-070–075 | rasterizer, OCR routing, and cache deletion tests |
 | FR-080–088 | SSE fixtures, cancellation, timeout, and retry tests |
@@ -318,9 +318,9 @@ Required gates after scaffolding:
 
 - No Rust-memory migration is included.
 - The Rust application remains untouched.
-- Android Room starts at schema version 1 with migration-test infrastructure before version 2.
+- Android Room started at schema version 1; the approved magic-paper text-pipeline repair advances it to version 2 with an `interrupted_runs` table and a populated-v1 migration test.
 - Provider adapters remain behind stable domain contracts.
-- Unknown persisted settings-entry policy IDs fall back to `three_finger_long_press`.
+- Unknown, corrupt, or future settings-entry policy IDs fall back to `magic_rune_button`; the legacy `three_finger_long_press` value is retained only when it was explicitly persisted.
 
 ## 14. Rollout and rollback
 
@@ -341,7 +341,7 @@ Each slice keeps the fake Provider experience runnable. Rollback disables/remove
 - Primary UX is full-screen magical paper.
 - Vision models receive images; text-only models use local recognition.
 - Tool-agent capabilities are deferred.
-- Settings defaults to three-finger long press for 2 seconds behind a replaceable policy.
+- Settings defaults to a subtle upper-right magical rune button behind a replaceable entry-mode policy; three-finger long press is retained but disabled by default.
 - Android 13/API 33 through Android 16/API 36 are supported by one full-feature APK; the project compiles against API 36.1 and targets API 36.
 - Finger and pressure stylus input are supported.
 - Rotation is supported with optional portrait lock.

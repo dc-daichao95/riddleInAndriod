@@ -131,7 +131,7 @@ Implement immutable data/sealed types. `NormalizedPoint` validates x/y in `0f..1
 interface ModelProvider {
     val descriptor: ProviderDescriptor
     fun stream(request: ModelRequest): Flow<ModelEvent>
-    suspend fun listModels(): Result<List<ModelDescriptor>>
+    suspend fun discoverModels(): ModelDiscoveryResult
     suspend fun validate(configuration: ProviderConfiguration): ValidationResult
 }
 ```
@@ -591,7 +591,7 @@ Observe preference in `MainActivity`; set `requestedOrientation` to `SCREEN_ORIE
 
 - [ ] **Step 6: Write and run instrumentation flow**
 
-With fake Provider, draw a stroke, advance/test inactivity, observe dissolve/stream/reply state, rotate, confirm geometry, open settings with synthesized three-finger hold, toggle portrait lock, return, and confirm the draft/page state.
+With a non-vision fake Provider, draw a stroke, advance/test inactivity, observe rendered dissolve stages and progressive reply pixels, rotate, confirm geometry, open settings with the magical rune button, toggle portrait lock, return, and confirm the draft/page state.
 
 ```powershell
 ./gradlew :feature-paper:test :app:connectedDebugAndroidTest
@@ -605,10 +605,13 @@ git add android-app/app android-app/feature-paper android-app/feature-settings
 git commit -m "feat(android): assemble immersive Android magic paper app"
 ```
 
-## Task 10: Android 13 compatibility with full feature parity
+## Task 9R: Reopen magic-paper UX, Provider setup, and text-model pipeline
+
+Execute every red-green-refactor slice in `doc/plans/magic-paper-ux-provider-text-repair.md`, beginning with its configuration-only R0 API 33 prerequisite. Task 9 remains incomplete until that plan's independent specification and quality review passes. Do not claim Android 13 compatibility merely because `minSdk` changed, phase labels/visible Compose reply text exist, or stale device-test XML passes.
+
+## Task 10: Android 13 compatibility audit and closure
 
 **Files:**
-- Modify: every Android module `build.gradle.kts` that declares `minSdk`
 - Modify: `android-app/README.md`
 - Modify: `doc/specs/android-magic-paper-app.md`
 - Modify: `doc/specs/android-13-compatibility.md`
@@ -618,19 +621,19 @@ git commit -m "feat(android): assemble immersive Android magic paper app"
 - Consumes: the complete Task 1 through Task 9 application and test suite.
 - Produces: one unchanged-feature APK supporting API 33 through API 36, plus API 33/API 36.1 parity evidence.
 
-- [ ] **Step 1: Record the RED configuration evidence**
+- [ ] **Step 1: Reverify the R0 configuration baseline**
 
-Add a deterministic build/configuration assertion that inspects every Android module and requires `minSdk = 33`. Run it before changing production configuration.
+Run the deterministic configuration assertion added in repair-plan R0. Inspect every merged manifest and verify `minSdk = 33`, compile API 36.1, and target 36.
 
 ```powershell
 ./gradlew verifyAndroidCompatibility
 ```
 
-Expected RED: the assertion reports the modules still declaring `minSdk = 36`.
+Expected GREEN: all modules and merged manifests meet the baseline. The historical RED evidence remains recorded in the R0 report.
 
-- [ ] **Step 2: Make the minimum configuration-only change**
+- [ ] **Step 2: Audit real API 33 failures without speculative changes**
 
-Change only module `minSdk` declarations from 36 to 33. Keep the API 36.1 compile DSL, `targetSdk = 36`, application ID, dependencies, Provider contracts, Room schema, resources, and UI behavior unchanged.
+Review all R0–R6 lint/device evidence. Add a compatibility guard only when an observed API 33 failure has a failing regression test. Keep the API 36.1 compile DSL, `targetSdk = 36`, application ID, Provider contracts, Room schema, and full feature behavior unchanged.
 
 - [ ] **Step 3: Verify compilation and API usage**
 
@@ -640,9 +643,9 @@ Change only module `minSdk` declarations from 36 to 33. Keep the API 36.1 compil
 
 Expected GREEN: all gates pass and lint reports no unguarded API newer than 33. If a gate fails on a real post-33 API use, first add a failing regression test, then implement the smallest local AndroidX compatibility path or `SDK_INT` guard. Do not refactor unrelated code.
 
-- [ ] **Step 4: Install API 33 tooling and create the boundary AVD**
+- [ ] **Step 4: Reverify API 33 tooling and the boundary AVD**
 
-Install `platforms;android-33` and `system-images;android-33;google_apis;x86_64`, then create `Riddle_API_33`. Preserve `Riddle_API_36_1`.
+Confirm repair-plan R0 installed `platforms;android-33`, `system-images;android-33;google_apis;x86_64`, and `Riddle_API_33`. Repair missing tooling only if the recorded R0 environment was removed. Preserve `Riddle_API_36_1`.
 
 ```powershell
 sdkmanager "platforms;android-33" "system-images;android-33;google_apis;x86_64"
@@ -652,7 +655,7 @@ emulator -list-avds
 
 - [ ] **Step 5: Run the identical device suite on both boundary versions**
 
-Run the same `connectedDebugAndroidTest` cases without API-level assumptions, ignored tests, feature flags, or reduced-mode branches on `Riddle_API_33` and `Riddle_API_36_1`. Verify install/launch, writing, inactivity commit, dissolve, streaming reply, cancellation, hidden settings, orientation and portrait lock, Provider settings, Keystore, Room, and draft/process recreation behavior.
+Run the same `connectedDebugAndroidTest` cases without API-level assumptions, ignored tests, feature flags, or reduced-mode branches on `Riddle_API_33` and `Riddle_API_36_1`. Verify install/launch, writing, inactivity commit, dissolve, streaming reply, cancellation, magical-rune settings entry, orientation and portrait lock, Provider settings, Keystore, Room, and draft/process recreation behavior.
 
 ```powershell
 ./gradlew :app:connectedDebugAndroidTest
