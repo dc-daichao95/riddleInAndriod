@@ -1,10 +1,21 @@
 package dev.riddle.magicpaper.paperui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -12,12 +23,21 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -25,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.riddle.magicpaper.paper.MagicPaperView
+import dev.riddle.magicpaper.model.SettingsEntryMode
 
 @Composable
 fun MagicPaperRoute(
@@ -45,7 +66,15 @@ fun MagicPaperScreen(
     onPaperIntent: (dev.riddle.magicpaper.paper.PaperIntent) -> Unit,
     onIntent: (PaperUiIntent) -> Unit,
     modifier: Modifier = Modifier,
+    contentInsets: WindowInsets = WindowInsets.safeDrawing.union(WindowInsets.ime),
+    runeMotionPolicy: RuneMotionPolicy? = null,
+    motionScaleSource: MotionScaleSource? = null,
 ) {
+    val context = LocalContext.current
+    val effectiveMotionScaleSource = motionScaleSource ?: remember(context) { AndroidMotionScaleSource(context) }
+    val motionScales = remember(effectiveMotionScaleSource) { effectiveMotionScaleSource.scales() }
+    val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 0f)
+    val effectiveRuneMotionPolicy = runeMotionPolicy ?: RuneMotionPolicy(durationScale)
     Box(
         modifier.fillMaxSize().background(Color(0xFFF4F0E5)),
     ) {
@@ -67,6 +96,16 @@ fun MagicPaperScreen(
                 .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
             color = Color.Transparent,
         )
+        if (state.settingsEntryMode == SettingsEntryMode.MAGIC_RUNE_BUTTON) {
+            MagicSettingsRune(
+                onClick = { onIntent(PaperUiIntent.OpenSettings) },
+                motionPolicy = effectiveRuneMotionPolicy,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(contentInsets)
+                    .padding(8.dp),
+            )
+        }
         if (state.reply.isNotEmpty()) {
             Text(
                 state.reply,
@@ -78,14 +117,26 @@ fun MagicPaperScreen(
         if (state.canCancel) {
             Button(
                 onClick = { onIntent(PaperUiIntent.Cancel) },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(24.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(contentInsets)
+                    .padding(24.dp),
             ) { Text(stringResource(R.string.paper_cancel)) }
         }
         if (state.helpVisible) {
             Surface(Modifier.fillMaxSize(), color = Color(0xF2F4F0E5)) {
-                Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .windowInsetsPadding(contentInsets)
+                        .padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     Text(stringResource(R.string.paper_help_title), style = MaterialTheme.typography.headlineMedium)
-                    Text(stringResource(R.string.paper_help_body), modifier = Modifier.padding(vertical = 24.dp))
+                    Text(
+                        stringResource(helpBodyResource(state.settingsEntryMode)),
+                        modifier = Modifier.padding(vertical = 24.dp),
+                    )
                     Button(onClick = { onIntent(PaperUiIntent.HideHelp) }) {
                         Text(stringResource(R.string.paper_help_close))
                     }
@@ -93,6 +144,66 @@ fun MagicPaperScreen(
             }
         }
     }
+}
+
+@Composable
+private fun MagicSettingsRune(
+    onClick: () -> Unit,
+    motionPolicy: RuneMotionPolicy,
+    modifier: Modifier = Modifier,
+) {
+    val brightness = remember(motionPolicy.initialBrightness) { Animatable(motionPolicy.initialBrightness) }
+    var isShimmering by remember { mutableStateOf(false) }
+    var shimmerSequenceCount by remember { mutableStateOf(0) }
+    LaunchedEffect(motionPolicy) {
+        brightness.snapTo(motionPolicy.initialBrightness)
+        isShimmering = motionPolicy.shimmerKeyframes.isNotEmpty()
+        if (isShimmering) shimmerSequenceCount += 1
+        try {
+            motionPolicy.shimmerKeyframes.forEach { keyframe ->
+                brightness.animateTo(keyframe.brightness, tween(keyframe.durationMillis))
+            }
+        } finally {
+            isShimmering = false
+        }
+    }
+    val label = stringResource(R.string.paper_open_settings)
+    Box(
+        modifier = modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .testTag("magic_rune_touch")
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(30.dp)
+                .testTag(if (isShimmering) "magic_rune_shimmering" else "magic_rune_static"),
+        ) {
+            Box(Modifier.fillMaxSize().testTag("magic_rune_shimmer_count_$shimmerSequenceCount"))
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    .alpha(brightness.value)
+                    .testTag("magic_rune_visual"),
+            ) {
+                val ink = Color(0xFF655A83)
+                val thin = size.minDimension * .055f
+                drawCircle(ink, radius = size.minDimension * .42f, style = Stroke(thin))
+                drawLine(ink, Offset(center.x, size.height * .18f), Offset(center.x, size.height * .82f), thin, StrokeCap.Round)
+                drawLine(ink, Offset(size.width * .25f, center.y), Offset(size.width * .75f, center.y), thin, StrokeCap.Round)
+                drawLine(ink, Offset(size.width * .28f, size.height * .28f), Offset(size.width * .72f, size.height * .72f), thin, StrokeCap.Round)
+                drawLine(ink, Offset(size.width * .72f, size.height * .28f), Offset(size.width * .28f, size.height * .72f), thin, StrokeCap.Round)
+                drawCircle(ink, radius = size.minDimension * .075f)
+            }
+        }
+    }
+}
+
+private fun helpBodyResource(mode: SettingsEntryMode): Int = when (mode) {
+    SettingsEntryMode.MAGIC_RUNE_BUTTON -> R.string.paper_help_body_rune
+    SettingsEntryMode.THREE_FINGER_LONG_PRESS -> R.string.paper_help_body_three_finger
 }
 
 @Composable

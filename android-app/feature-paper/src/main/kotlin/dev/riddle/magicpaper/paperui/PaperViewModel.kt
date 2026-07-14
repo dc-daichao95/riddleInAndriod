@@ -9,7 +9,7 @@ import dev.riddle.magicpaper.model.*
 import dev.riddle.magicpaper.paper.PaperIntent
 import dev.riddle.magicpaper.paper.PaperRenderModel
 import dev.riddle.magicpaper.paper.RasterizedPage
-import dev.riddle.magicpaper.paper.SettingsEntryMode
+import dev.riddle.magicpaper.model.SettingsEntryMode
 import java.io.FileInputStream
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -37,6 +37,7 @@ sealed interface PaperUiIntent {
     data object SettingsClosed : PaperUiIntent
     data object OpenSettings : PaperUiIntent
     data class SetPortraitLocked(val locked: Boolean) : PaperUiIntent
+    data class SetSettingsEntryMode(val mode: SettingsEntryMode) : PaperUiIntent
 }
 
 sealed interface PaperEffect { data object OpenSettings : PaperEffect }
@@ -140,6 +141,9 @@ class PaperViewModel(
             PaperUiIntent.OpenSettings -> openSettings()
             is PaperUiIntent.SetPortraitLocked -> viewModelScope.launch(workerDispatcher) {
                 preferences.setPortraitLocked(intent.locked)
+            }
+            is PaperUiIntent.SetSettingsEntryMode -> viewModelScope.launch(workerDispatcher) {
+                preferences.setSettingsEntryMode(intent.mode)
             }
         }
     }

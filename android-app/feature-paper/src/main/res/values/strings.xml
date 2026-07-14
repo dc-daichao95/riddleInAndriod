@@ -10,7 +10,9 @@
     <string name="paper_interrupted">Previous reply was interrupted</string>
     <string name="paper_failed">Reply failed</string>
     <string name="paper_cancel">Cancel</string>
+    <string name="paper_open_settings">Open magic settings</string>
     <string name="paper_help_title">Magic paper</string>
-    <string name="paper_help_body">Write anywhere. Pause to send. Hold three fingers to open settings.</string>
+    <string name="paper_help_body_rune">Write anywhere. Pause to send. Tap the rune in the upper-right corner to open settings.</string>
+    <string name="paper_help_body_three_finger">Write anywhere. Pause to send. Hold three fingers to open settings.</string>
     <string name="paper_help_close">Return to paper</string>
 </resources>

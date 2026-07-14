@@ -28,7 +28,7 @@ import dev.riddle.magicpaper.paperui.PaperViewModel
 import dev.riddle.magicpaper.paperui.ModelSelection
 import dev.riddle.magicpaper.paperui.SelectedModel
 import dev.riddle.magicpaper.paper.PageRasterizer
-import dev.riddle.magicpaper.paper.SettingsEntryMode
+import dev.riddle.magicpaper.model.SettingsEntryMode
 import dev.riddle.magicpaper.provider.DeepSeekProvider
 import dev.riddle.magicpaper.provider.OkHttpModelTransport
 import dev.riddle.magicpaper.provider.OpenAiCompatibleProvider

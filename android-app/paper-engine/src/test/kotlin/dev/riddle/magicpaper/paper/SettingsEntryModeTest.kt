@@ -1,5 +1,6 @@
 package dev.riddle.magicpaper.paper
 
+import dev.riddle.magicpaper.model.SettingsEntryMode
 import dev.riddle.magicpaper.model.NormalizedPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals

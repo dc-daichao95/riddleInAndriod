@@ -22,7 +22,7 @@ import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import dev.riddle.magicpaper.paper.PaperIntent
 import dev.riddle.magicpaper.paper.PageRasterizer
-import dev.riddle.magicpaper.paper.SettingsEntryMode
+import dev.riddle.magicpaper.model.SettingsEntryMode
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers

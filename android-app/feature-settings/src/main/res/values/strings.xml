@@ -2,6 +2,9 @@
     <string name="settings_title">Settings</string>
     <string name="settings_back">Back</string>
     <string name="portrait_lock">Lock to portrait</string>
+    <string name="settings_entry_title">Open settings with</string>
+    <string name="settings_entry_magic_rune">Magic rune button</string>
+    <string name="settings_entry_three_finger">Three-finger hold (legacy)</string>
     <string name="provider_settings_title">Model providers</string>
     <string name="provider_presets_label">Provider presets</string>
     <string name="provider_preset_openai">OpenAI</string>

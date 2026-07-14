@@ -15,7 +15,7 @@ import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import dev.riddle.magicpaper.paper.PageRasterizer
 import dev.riddle.magicpaper.paper.PaperIntent
-import dev.riddle.magicpaper.paper.SettingsEntryMode
+import dev.riddle.magicpaper.model.SettingsEntryMode
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +66,19 @@ class SettingsEntryViewModelTest {
         val viewModel = viewModel(preferences = preferences)
         dispatcher.scheduler.runCurrent()
 
+        assertEquals(SettingsEntryMode.THREE_FINGER_LONG_PRESS, viewModel.state.value.settingsEntryMode)
+    }
+
+    @Test
+    fun `settings entry selection is persisted through provider neutral mode intent`() = runTest(dispatcher) {
+        val preferences = EntryPreferences()
+        val viewModel = viewModel(preferences = preferences)
+        dispatcher.scheduler.runCurrent()
+
+        viewModel.onIntent(PaperUiIntent.SetSettingsEntryMode(SettingsEntryMode.THREE_FINGER_LONG_PRESS))
+        dispatcher.scheduler.runCurrent()
+
+        assertEquals(SettingsEntryMode.THREE_FINGER_LONG_PRESS, preferences.settingsEntryMode.value)
         assertEquals(SettingsEntryMode.THREE_FINGER_LONG_PRESS, viewModel.state.value.settingsEntryMode)
     }
 

@@ -10,7 +10,9 @@
     <string name="paper_interrupted">上一次回复已中断</string>
     <string name="paper_failed">回复失败</string>
     <string name="paper_cancel">取消</string>
+    <string name="paper_open_settings">打开魔法设置</string>
     <string name="paper_help_title">魔法纸</string>
-    <string name="paper_help_body">随处书写，停笔后发送。三指长按可打开设置。</string>
+    <string name="paper_help_body_rune">随处书写，停笔后发送。点击右上角符文可打开设置。</string>
+    <string name="paper_help_body_three_finger">随处书写，停笔后发送。三指长按可打开设置。</string>
     <string name="paper_help_close">返回纸张</string>
 </resources>

@@ -1,6 +1,7 @@
 package dev.riddle.magicpaper.paper
 
 import dev.riddle.magicpaper.model.NormalizedPoint
+import dev.riddle.magicpaper.model.SettingsEntryMode
 import kotlin.math.hypot
 
 enum class PointerTool {
@@ -27,20 +28,9 @@ fun interface SettingsEntryPolicy {
     fun onTouchFrame(frame: TouchFrame, monotonicMillis: Long): SettingsEntryEvent?
 }
 
-enum class SettingsEntryMode(val persistedId: String) {
-    MAGIC_RUNE_BUTTON("magic_rune_button"),
-    THREE_FINGER_LONG_PRESS("three_finger_long_press"),
-    ;
-
-    fun createPolicy(): SettingsEntryPolicy = when (this) {
-        MAGIC_RUNE_BUTTON -> SettingsEntryPolicy { _, _ -> null }
-        THREE_FINGER_LONG_PRESS -> ThreeFingerLongPressPolicy()
-    }
-
-    companion object {
-        fun fromPersistedId(id: String?): SettingsEntryMode =
-            entries.firstOrNull { it.persistedId == id } ?: MAGIC_RUNE_BUTTON
-    }
+fun SettingsEntryMode.createPolicy(): SettingsEntryPolicy = when (this) {
+    SettingsEntryMode.MAGIC_RUNE_BUTTON -> SettingsEntryPolicy { _, _ -> null }
+    SettingsEntryMode.THREE_FINGER_LONG_PRESS -> ThreeFingerLongPressPolicy()
 }
 
 class ThreeFingerLongPressPolicy(

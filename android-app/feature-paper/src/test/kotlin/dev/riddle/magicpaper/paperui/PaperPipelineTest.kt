@@ -199,9 +199,9 @@ private class PipelinePersistence : PaperPersistence {
 
 private class PipelinePreferences : PaperPreferences {
     override val portraitLocked = MutableStateFlow(false)
-    override val settingsEntryMode = MutableStateFlow(dev.riddle.magicpaper.paper.SettingsEntryMode.MAGIC_RUNE_BUTTON)
+    override val settingsEntryMode = MutableStateFlow(dev.riddle.magicpaper.model.SettingsEntryMode.MAGIC_RUNE_BUTTON)
     override suspend fun setPortraitLocked(locked: Boolean) { portraitLocked.value = locked }
-    override suspend fun setSettingsEntryMode(mode: dev.riddle.magicpaper.paper.SettingsEntryMode) {
+    override suspend fun setSettingsEntryMode(mode: dev.riddle.magicpaper.model.SettingsEntryMode) {
         settingsEntryMode.value = mode
     }
 }

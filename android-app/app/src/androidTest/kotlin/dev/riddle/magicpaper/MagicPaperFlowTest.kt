@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -34,6 +35,14 @@ import org.junit.Test
 
 class MagicPaperFlowTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Before fun unlockPortraitPreference() {
+        compose.activity.paperViewModel.onIntent(PaperUiIntent.SetPortraitLocked(false))
+        compose.waitUntil(2_000) {
+            !compose.activity.paperViewModel.state.value.portraitLocked &&
+                compose.activity.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
 
     @After fun resetPortraitPreference() {
         compose.activity.paperViewModel.onIntent(PaperUiIntent.SetPortraitLocked(false))
@@ -89,9 +98,9 @@ class MagicPaperFlowTest {
         }
     }
 
-    @Test fun progressive_three_finger_touch_opens_settings_and_portrait_lock_round_trips() {
+    @Test fun rune_opens_settings_and_portrait_lock_round_trips() {
         drawStrokeThroughView(.2f, .3f, .6f, .7f)
-        synthesizeThreeFingerHold()
+        compose.onNodeWithTag("magic_rune_touch").performClick()
         compose.onNodeWithText(compose.activity.getString(dev.riddle.magicpaper.settings.R.string.settings_title)).assertExists()
         compose.onNodeWithTag("portrait_lock").performClick()
         compose.waitUntil(2_000) { compose.activity.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }

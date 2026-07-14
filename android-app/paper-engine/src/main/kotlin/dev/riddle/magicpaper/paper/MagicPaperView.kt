@@ -7,6 +7,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import dev.riddle.magicpaper.model.NormalizedPoint
+import dev.riddle.magicpaper.model.SettingsEntryMode
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min

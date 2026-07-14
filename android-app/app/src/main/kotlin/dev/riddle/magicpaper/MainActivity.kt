@@ -3,6 +3,7 @@ package dev.riddle.magicpaper
 import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -48,10 +49,18 @@ class MainActivity : ComponentActivity() {
                         ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
                 }
+                BackHandler(enabled = settingsVisible) {
+                    settingsVisible = false
+                    paperViewModel.onIntent(PaperUiIntent.SettingsClosed)
+                }
                 if (settingsVisible) {
                     AppSettingsScreen(
                         portraitLocked = state.portraitLocked,
                         onPortraitLockedChange = { paperViewModel.onIntent(PaperUiIntent.SetPortraitLocked(it)) },
+                        settingsEntryMode = state.settingsEntryMode,
+                        onSettingsEntryModeChange = {
+                            paperViewModel.onIntent(PaperUiIntent.SetSettingsEntryMode(it))
+                        },
                         onBack = {
                             settingsVisible = false
                             paperViewModel.onIntent(PaperUiIntent.SettingsClosed)
