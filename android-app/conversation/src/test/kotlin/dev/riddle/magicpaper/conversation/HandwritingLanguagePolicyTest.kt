@@ -57,8 +57,8 @@ class HandwritingLanguagePolicyTest {
     }
 
     @Test
-    fun `text request preserves Chinese source and asks for same-language response`() {
-        val source = "  \u4f60\u597d\n"
+    fun `text request preserves explicit alternate-language request and gives it priority`() {
+        val source = "  \u8bf7\u7528\u82f1\u6587\u56de\u7b54\n"
 
         val request = HandwritingRequestPolicy.text(
             modelId = "model",
@@ -69,6 +69,8 @@ class HandwritingLanguagePolicyTest {
         assertEquals(MessageRole.SYSTEM, request.messages[0].role)
         assertTrue(request.messages[0].text.contains("same language"))
         assertTrue(request.messages[0].text.contains("zh-Hans"))
+        assertTrue(request.messages[0].text.contains("explicitly requests another language"))
+        assertTrue(request.messages[0].text.contains("follow that request"))
         assertEquals(source, request.messages[1].text)
     }
 
@@ -82,6 +84,8 @@ class HandwritingLanguagePolicyTest {
 
         assertTrue(request.messages[0].text.contains("same language"))
         assertTrue(request.messages[0].text.contains("zh-Hant"))
+        assertTrue(request.messages[0].text.contains("explicitly requests another language"))
+        assertTrue(request.messages[0].text.contains("follow that request"))
         assertTrue(request.messages[1].text.contains("zh-Hant"))
         assertEquals("data:image/png;base64,AA==", request.messages[1].imageDataUrl)
     }

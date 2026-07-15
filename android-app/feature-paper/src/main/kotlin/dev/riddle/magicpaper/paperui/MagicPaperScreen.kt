@@ -85,9 +85,7 @@ fun MagicPaperScreen(
     val context = LocalContext.current
     val effectiveMotionScaleSource = motionScaleSource ?: remember(context) { AndroidMotionScaleSource(context) }
     val motionScales = remember(effectiveMotionScaleSource) { effectiveMotionScaleSource.scales() }
-    // Start conservatively until the platform/source emits its actual scale. This prevents a
-    // one-frame shimmer for users whose reduced-motion scale is already zero.
-    val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 0f)
+    val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 1f)
     val effectiveRuneMotionPolicy = runeMotionPolicy ?: RuneMotionPolicy(durationScale)
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current

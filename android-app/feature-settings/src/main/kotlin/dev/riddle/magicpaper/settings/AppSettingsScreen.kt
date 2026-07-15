@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -59,65 +60,79 @@ fun AppSettingsScreen(
                 modifier = Modifier.weight(1f),
             )
         }
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(stringResource(R.string.portrait_lock), Modifier.weight(1f))
-            Switch(
-                checked = portraitLocked,
-                onCheckedChange = onPortraitLockedChange,
-                modifier = Modifier.testTag("portrait_lock"),
-            )
-        }
-        Text(
-            stringResource(R.string.settings_entry_title),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        )
-        SettingsEntryMode.entries.forEach { mode ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .selectable(
-                        selected = settingsEntryMode == mode,
-                        onClick = { onSettingsEntryModeChange(mode) },
-                        role = Role.RadioButton,
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag("settings_scroll")) {
+            item(key = "portrait_lock") {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.portrait_lock), Modifier.weight(1f))
+                    Switch(
+                        checked = portraitLocked,
+                        onCheckedChange = onPortraitLockedChange,
+                        modifier = Modifier.testTag("portrait_lock"),
                     )
-                    .testTag("settings_entry_${mode.persistedId}")
-                    .padding(horizontal = 24.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = settingsEntryMode == mode, onClick = null)
-                Text(stringResource(entryModeLabel(mode)), Modifier.padding(start = 8.dp))
+                }
             }
-        }
-        Text(
-            stringResource(R.string.handwriting_language_title),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-        )
-        HandwritingLanguage.entries.forEach { language ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .selectable(
-                        selected = handwritingLanguage == language,
-                        onClick = { onHandwritingLanguageChange(language) },
-                        role = Role.RadioButton,
-                    )
-                    .testTag("handwriting_language_${language.persistedId}")
-                    .padding(horizontal = 24.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = handwritingLanguage == language, onClick = null)
-                Text(stringResource(handwritingLanguageLabel(language)), Modifier.padding(start = 8.dp))
+            item(key = "settings_entry_title") {
+                Text(
+                    stringResource(R.string.settings_entry_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                )
             }
-        }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            providerSettings()
+            SettingsEntryMode.entries.forEach { mode ->
+                item(key = "settings_entry_${mode.persistedId}") {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .selectable(
+                                selected = settingsEntryMode == mode,
+                                onClick = { onSettingsEntryModeChange(mode) },
+                                role = Role.RadioButton,
+                            )
+                            .testTag("settings_entry_${mode.persistedId}")
+                            .padding(horizontal = 24.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = settingsEntryMode == mode, onClick = null)
+                        Text(stringResource(entryModeLabel(mode)), Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+            item(key = "handwriting_language_title") {
+                Text(
+                    stringResource(R.string.handwriting_language_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                )
+            }
+            HandwritingLanguage.entries.forEach { language ->
+                item(key = "handwriting_language_${language.persistedId}") {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .selectable(
+                                selected = handwritingLanguage == language,
+                                onClick = { onHandwritingLanguageChange(language) },
+                                role = Role.RadioButton,
+                            )
+                            .testTag("handwriting_language_${language.persistedId}")
+                            .padding(horizontal = 24.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = handwritingLanguage == language, onClick = null)
+                        Text(stringResource(handwritingLanguageLabel(language)), Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+            item(key = "provider_settings") {
+                Box(Modifier.fillMaxWidth().fillParentMaxHeight()) {
+                    providerSettings()
+                }
+            }
         }
     }
 }

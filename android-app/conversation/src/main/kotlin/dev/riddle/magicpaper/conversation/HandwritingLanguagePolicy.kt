@@ -29,6 +29,8 @@ object HandwritingRequestPolicy {
 
     private fun languageInstruction(languageTag: String): Message = Message(
         role = MessageRole.SYSTEM,
-        text = "Reply in the same language as the user's handwriting. The selected handwriting language is $languageTag.",
+        text = "Reply in the same language as the user's handwriting. " +
+            "The selected handwriting language is $languageTag. " +
+            "If the user explicitly requests another language, follow that request.",
     )
 }

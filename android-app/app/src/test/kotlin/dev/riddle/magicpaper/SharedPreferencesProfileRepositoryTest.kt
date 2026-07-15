@@ -29,6 +29,20 @@ class SharedPreferencesProfileRepositoryTest {
         assertNull(repository.list().single().defaultModelId)
     }
 
+    @Test fun `selected enabled profile without a usable model is locally unavailable`() = runBlocking {
+        listOf(JSONObject.NULL, "", "   ").forEach { model ->
+            val context = RuntimeEnvironment.getApplication()
+            val preferences = context.getSharedPreferences("provider-profiles-v1", Context.MODE_PRIVATE)
+            preferences.edit().clear().commit()
+            preferences.edit()
+                .putString("profiles", JSONArray().put(profileJson(model)).toString())
+                .putString("selected", "profile")
+                .commit()
+
+            assertNull(SharedPreferencesProfileRepository(context).selectedConfiguration())
+        }
+    }
+
     private fun profileJson(model: Any): JSONObject = JSONObject().apply {
         put("id", "profile")
         put("type", "OPENAI_COMPATIBLE")

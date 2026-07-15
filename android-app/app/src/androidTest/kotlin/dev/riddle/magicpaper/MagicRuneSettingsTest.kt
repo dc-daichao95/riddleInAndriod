@@ -142,8 +142,42 @@ class MagicRuneSettingsTest {
         )
         assertInside(compose.onNodeWithTag("settings_back").fetchSemanticsNode().boundsInRoot, safe)
         assertInside(compose.onNodeWithTag("portrait_lock").fetchSemanticsNode().boundsInRoot, safe)
+        compose.onNodeWithTag("settings_scroll").performScrollToIndex(9)
         compose.onNodeWithTag("provider_scroll").performScrollToIndex(2)
         assertInside(compose.onNodeWithTag("provider_last").fetchSemanticsNode().boundsInRoot, safe)
+    }
+
+    @Test fun short_large_font_settings_can_reach_language_and_provider_controls_by_scroll() {
+        compose.activity.runOnUiThread {
+            compose.activity.setContent {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, 2f)) {
+                    Box(Modifier.width(320.dp).height(360.dp).testTag("short_settings_root")) {
+                        AppSettingsScreen(
+                            portraitLocked = false,
+                            onPortraitLockedChange = {},
+                            onBack = {},
+                            providerSettings = {
+                                LazyColumn(Modifier.fillMaxSize().testTag("short_provider_scroll")) {
+                                    item { Button({}, Modifier.testTag("short_provider_primary")) { Text("Provider primary") } }
+                                    item { Spacer(Modifier.height(600.dp)) }
+                                    item { Button({}, Modifier.testTag("short_provider_last")) { Text("Provider last") } }
+                                }
+                            },
+                            contentInsets = WindowInsets(0, 0, 0, 0),
+                        )
+                    }
+                }
+            }
+        }
+        compose.waitForIdle()
+        val root = compose.onNodeWithTag("short_settings_root").fetchSemanticsNode().boundsInRoot
+
+        compose.onNodeWithTag("settings_scroll").performScrollToIndex(8)
+        assertInside(compose.onNodeWithTag("handwriting_language_english").fetchSemanticsNode().boundsInRoot, root)
+        compose.onNodeWithTag("settings_scroll").performScrollToIndex(9)
+        compose.onNodeWithTag("short_provider_scroll").performScrollToIndex(2)
+        assertInside(compose.onNodeWithTag("short_provider_last").fetchSemanticsNode().boundsInRoot, root)
     }
 
     @Test fun help_describes_the_active_settings_entry_mode() {
@@ -233,12 +267,11 @@ class MagicRuneSettingsTest {
             compose.onAllNodesWithTag("magic_rune_static", useUnmergedTree = true)
                 .fetchSemanticsNodes().size == 1
         }
-        compose.onNodeWithTag("magic_rune_shimmer_count_0", useUnmergedTree = true).assertExists()
+        val baselineCount = currentShimmerCount()
 
         scales.value = 1f
         compose.waitUntil(2_000) {
-            compose.onAllNodesWithTag("magic_rune_shimmer_count_1", useUnmergedTree = true)
-                .fetchSemanticsNodes().size == 1
+            currentShimmerCount() == baselineCount + 1
         }
 
         scales.value = 0f
@@ -246,19 +279,17 @@ class MagicRuneSettingsTest {
             compose.onAllNodesWithTag("magic_rune_static", useUnmergedTree = true)
                 .fetchSemanticsNodes().size == 1
         }
-        compose.onNodeWithTag("magic_rune_shimmer_count_1", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("magic_rune_static", useUnmergedTree = true).assertExists()
-        compose.onNodeWithTag("magic_rune_shimmer_count_1", useUnmergedTree = true).assertExists()
+        assertEquals(baselineCount + 1, currentShimmerCount())
 
         scales.value = 1f
         compose.waitUntil(2_000) {
-            compose.onAllNodesWithTag("magic_rune_shimmer_count_2", useUnmergedTree = true)
-                .fetchSemanticsNodes().size == 1
+            currentShimmerCount() == baselineCount + 2
         }
 
         scales.value = 1f
         compose.waitForIdle()
-        compose.onNodeWithTag("magic_rune_shimmer_count_2", useUnmergedTree = true).assertExists()
+        assertEquals(baselineCount + 2, currentShimmerCount())
     }
 
     @Test fun tapping_rune_preserves_draft_and_back_closes_settings_without_finishing_activity() {
@@ -316,6 +347,11 @@ class MagicRuneSettingsTest {
                 actual.right <= expected.right + tolerancePx &&
                 actual.bottom <= expected.bottom + tolerancePx,
         )
+    }
+
+    private fun currentShimmerCount(): Int = (0..10).single { count ->
+        compose.onAllNodesWithTag("magic_rune_shimmer_count_$count", useUnmergedTree = true)
+            .fetchSemanticsNodes().size == 1
     }
 
     private fun px(value: androidx.compose.ui.unit.Dp): Float = value.value * compose.activity.resources.displayMetrics.density

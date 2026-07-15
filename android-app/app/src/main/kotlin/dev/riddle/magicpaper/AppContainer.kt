@@ -221,7 +221,9 @@ class SharedPreferencesProfileRepository(context: Context) : ProviderProfileRepo
     override suspend fun selectedId(): String? = preferences.getString("selected", null)
     fun selectedConfiguration(): ProviderConfiguration? {
         val selected = preferences.getString("selected", null) ?: return null
-        return readProfiles().firstOrNull { it.id == selected && it.enabled }
+        return readProfiles().firstOrNull {
+            it.id == selected && it.enabled && !it.defaultModelId.isNullOrBlank()
+        }
     }
     private fun readProfiles(): List<ProviderConfiguration> = runCatching {
         val array = JSONArray(preferences.getString("profiles", "[]"))
