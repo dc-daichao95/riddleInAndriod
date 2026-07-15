@@ -85,7 +85,9 @@ fun MagicPaperScreen(
     val context = LocalContext.current
     val effectiveMotionScaleSource = motionScaleSource ?: remember(context) { AndroidMotionScaleSource(context) }
     val motionScales = remember(effectiveMotionScaleSource) { effectiveMotionScaleSource.scales() }
-    val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 1f)
+    // Start conservatively until the platform/source emits its actual scale. This prevents a
+    // one-frame shimmer for users whose reduced-motion scale is already zero.
+    val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 0f)
     val effectiveRuneMotionPolicy = runeMotionPolicy ?: RuneMotionPolicy(durationScale)
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
@@ -293,6 +295,7 @@ private fun phaseSummary(phase: PaperPhase) = stringResource(when (phase) {
     PaperPhase.Completed -> R.string.paper_completed
     PaperPhase.Cancelled -> R.string.paper_cancelled
     PaperPhase.Interrupted -> R.string.paper_interrupted
+    PaperPhase.ConfigurationRequired -> R.string.paper_configuration_required
     PaperPhase.RecognitionPreparationFailed -> R.string.paper_recognition_preparation_failed
     PaperPhase.RecognitionFailed -> R.string.paper_recognition_failed
     PaperPhase.Failed -> R.string.paper_failed

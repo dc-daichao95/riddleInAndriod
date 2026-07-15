@@ -19,10 +19,11 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.Locale
 
 enum class PaperPhase {
     Listening, Preparing, PreparingRecognition, Recognizing, Thinking, Streaming, Completed,
-    Cancelled, Interrupted, RecognitionPreparationFailed, RecognitionFailed, Failed,
+    Cancelled, Interrupted, ConfigurationRequired, RecognitionPreparationFailed, RecognitionFailed, Failed,
 }
 
 data class PaperUiState(
@@ -32,6 +33,7 @@ data class PaperUiState(
     val helpVisible: Boolean = false,
     val portraitLocked: Boolean = false,
     val settingsEntryMode: SettingsEntryMode = SettingsEntryMode.MAGIC_RUNE_BUTTON,
+    val handwritingLanguage: HandwritingLanguage = HandwritingLanguage.AUTOMATIC,
 ) {
     val canCancel: Boolean get() = phase in setOf(
         PaperPhase.Preparing,
@@ -50,6 +52,7 @@ sealed interface PaperUiIntent {
     data object OpenSettings : PaperUiIntent
     data class SetPortraitLocked(val locked: Boolean) : PaperUiIntent
     data class SetSettingsEntryMode(val mode: SettingsEntryMode) : PaperUiIntent
+    data class SetHandwritingLanguage(val language: HandwritingLanguage) : PaperUiIntent
     data class SetMotionScale(val scale: Float) : PaperUiIntent
     data class SetPageGeometry(val geometry: PageGeometry, val publisherId: Long = 0L) : PaperUiIntent
 }
@@ -68,12 +71,16 @@ interface PaperPersistence {
 interface PaperPreferences {
     val portraitLocked: Flow<Boolean>
     val settingsEntryMode: Flow<SettingsEntryMode>
+    val handwritingLanguage: Flow<HandwritingLanguage> get() = flowOf(HandwritingLanguage.AUTOMATIC)
     suspend fun setPortraitLocked(locked: Boolean)
     suspend fun setSettingsEntryMode(mode: SettingsEntryMode)
+    suspend fun setHandwritingLanguage(language: HandwritingLanguage) = Unit
 }
 
 data class SelectedModel(val provider: ModelProvider, val modelId: String, val capabilities: ModelCapabilities)
-fun interface ModelSelection { suspend fun selected(): SelectedModel }
+fun interface ModelSelection { suspend fun selected(): SelectedModel? }
+
+private data object ProviderConfigurationRequired : Exception("A model provider must be configured")
 
 class PaperViewModel(
     private val modelSelection: ModelSelection,
@@ -95,6 +102,7 @@ class PaperViewModel(
         override fun elapsedRealtimeMillis() = System.nanoTime() / 1_000_000L
         override fun wallClockMillis() = System.currentTimeMillis()
     },
+    private val systemLocaleProvider: () -> Locale = Locale::getDefault,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(PaperUiState())
     val state: StateFlow<PaperUiState> = mutableState.asStateFlow()
@@ -152,6 +160,11 @@ class PaperViewModel(
         viewModelScope.launch(workerDispatcher) {
             preferences.settingsEntryMode.collect { mode -> mutableState.update { it.copy(settingsEntryMode = mode) } }
         }
+        viewModelScope.launch(workerDispatcher) {
+            preferences.handwritingLanguage.collect { language ->
+                mutableState.update { it.copy(handwritingLanguage = language) }
+            }
+        }
     }
 
     fun onPaperIntent(intent: PaperIntent) {
@@ -189,6 +202,9 @@ class PaperViewModel(
             }
             is PaperUiIntent.SetSettingsEntryMode -> viewModelScope.launch(workerDispatcher) {
                 preferences.setSettingsEntryMode(intent.mode)
+            }
+            is PaperUiIntent.SetHandwritingLanguage -> viewModelScope.launch(workerDispatcher) {
+                preferences.setHandwritingLanguage(intent.language)
             }
             is PaperUiIntent.SetMotionScale -> motionScale.set(intent.scale.coerceAtLeast(0f))
             is PaperUiIntent.SetPageGeometry -> {
@@ -345,9 +361,15 @@ class PaperViewModel(
             if (!markerPersisted) return
             if (!runInputDissolve(generation, ownerJob, ownedSubmission)) return
 
-            val selected = modelSelection.selected()
+            val selected = modelSelection.selected() ?: throw ProviderConfigurationRequired
             check(selected.capabilities.streaming) { "Selected model does not support streaming" }
-            val routed = turnInputRouter.route(selected.capabilities, strokes, ownedSubmission.geometry) { status ->
+            val languageTag = mutableState.value.handwritingLanguage.canonicalLanguageTag(systemLocaleProvider())
+            val routed = turnInputRouter.route(
+                selected.capabilities,
+                strokes,
+                ownedSubmission.geometry,
+                languageTag,
+            ) { status ->
                 if (generation == turnGeneration.get()) {
                     mutableState.update {
                         it.copy(
@@ -360,10 +382,10 @@ class PaperViewModel(
                 }
             }.getOrThrow()
             val request = when (routed) {
-                is TurnInput.RecognizedText -> ModelRequest(selected.modelId, listOf(Message(MessageRole.USER, routed.text)))
+                is TurnInput.RecognizedText -> HandwritingRequestPolicy.text(selected.modelId, routed.text, languageTag)
                 is TurnInput.PageImage -> {
                     pageImage = routed.image
-                    ModelRequest(selected.modelId, listOf(Message(MessageRole.USER, PAGE_IMAGE_PROMPT, imageDataUrl = routed.image.dataUrl())))
+                    HandwritingRequestPolicy.vision(selected.modelId, routed.image.dataUrl(), languageTag)
                 }
             }
             val prepared = stateMachine.transition(conversationState, ConversationInput.TurnInputPrepared(request))
@@ -425,7 +447,11 @@ class PaperViewModel(
                         phase = when ((failure as? InputRoutingError.RecognitionFailed)?.error) {
                             is HandwritingRecognitionError.ModelDownloadFailed -> PaperPhase.RecognitionPreparationFailed
                             is HandwritingRecognitionError -> PaperPhase.RecognitionFailed
-                            null -> if (failure is InputRoutingError.BlankRecognition) PaperPhase.RecognitionFailed else PaperPhase.Failed
+                            null -> when (failure) {
+                                InputRoutingError.BlankRecognition -> PaperPhase.RecognitionFailed
+                                ProviderConfigurationRequired -> PaperPhase.ConfigurationRequired
+                                else -> PaperPhase.Failed
+                            }
                         },
                         renderModel = if (current.reply.isEmpty()) PaperRenderModel(strokes) else current.renderModel,
                     )
@@ -662,6 +688,5 @@ class PaperViewModel(
         const val INPUT_DISSOLVE_STAGES = 14
         private const val ACTIVE_TURN_KEY = "paper_active_turn"
         private const val RUN_TOKEN_KEY = "paper_active_run_token"
-        private const val PAGE_IMAGE_PROMPT = "Read and respond to the handwriting in this page image."
     }
 }

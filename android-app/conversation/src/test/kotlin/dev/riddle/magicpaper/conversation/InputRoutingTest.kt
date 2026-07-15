@@ -46,12 +46,12 @@ class InputRoutingTest {
     }
 
     @Test
-    fun `recognized text is trimmed before staging`() = runTest {
+    fun `recognized text is preserved byte for byte before staging`() = runTest {
         val recognizer = FakeRecognizer().apply { result = Result.success("  hello  ") }
 
         val input = router(recognizer).route(ModelCapabilities(vision = false), page, geometry).getOrThrow()
 
-        assertEquals(TurnInput.RecognizedText("hello"), input)
+        assertEquals(TurnInput.RecognizedText("  hello  "), input)
     }
 
     @Test

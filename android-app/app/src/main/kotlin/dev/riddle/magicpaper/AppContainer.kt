@@ -10,15 +10,13 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.createSavedStateHandle
 import dev.riddle.magicpaper.conversation.ConversationOrchestrator
 import dev.riddle.magicpaper.conversation.ConversationStateMachine
-import dev.riddle.magicpaper.conversation.FakeModelProvider
+import dev.riddle.magicpaper.model.HandwritingLanguage
 import dev.riddle.magicpaper.conversation.MlKitHandwritingRecognizer
 import dev.riddle.magicpaper.conversation.TurnInputRouter
 import dev.riddle.magicpaper.memory.DraftPage
 import dev.riddle.magicpaper.memory.RiddleDatabase
 import dev.riddle.magicpaper.memory.RoomMemoryRepository
-import dev.riddle.magicpaper.model.FinishReason
 import dev.riddle.magicpaper.model.ModelCapabilities
-import dev.riddle.magicpaper.model.ModelEvent
 import dev.riddle.magicpaper.model.ModelProvider
 import dev.riddle.magicpaper.model.ProviderConfiguration
 import dev.riddle.magicpaper.model.ProviderType
@@ -50,12 +48,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.atomic.AtomicReference
 
 data class AppDispatchers(
     val io: CoroutineDispatcher = Dispatchers.IO,
@@ -100,24 +97,18 @@ class AppContainer(context: Context) {
             ProviderType.DEEPSEEK_COMPATIBLE -> DeepSeekProvider(configuration, transport)
         }
     }
-    internal val fakeProvider = FakeModelProvider(flow {
-        delay(500)
-        emit(ModelEvent.TextDelta("The paper remembers."))
-        delay(500)
-        emit(ModelEvent.Completed(FinishReason.STOP))
-    })
+    private val testModelOverride = AtomicReference<SelectedModel?>()
+    internal fun selectModelForTests(selectedModel: SelectedModel) {
+        testModelOverride.set(selectedModel)
+    }
     private val modelSelection = ModelSelection {
-        profileRepository.selectedConfiguration()?.let { configuration ->
+        testModelOverride.get() ?: profileRepository.selectedConfiguration()?.let { configuration ->
             SelectedModel(
                 providerFactory.create(configuration),
                 checkNotNull(configuration.defaultModelId),
                 configuration.capabilities,
             )
-        } ?: SelectedModel(
-            fakeProvider,
-            "fake",
-            ModelCapabilities(streaming = true, vision = true),
-        )
+        }
     }
     private val stateMachine = ConversationStateMachine()
     private val pageRasterizer = PageRasterizer(
@@ -190,11 +181,14 @@ private class RoomPaperPersistence(
     }
 }
 
-private class SharedPaperPreferences(context: Context) : PaperPreferences {
+internal class SharedPaperPreferences(context: Context) : PaperPreferences {
     private val preferences = context.getSharedPreferences("app-preferences-v1", Context.MODE_PRIVATE)
     override val portraitLocked = MutableStateFlow(preferences.getBoolean("portrait_locked", false))
     override val settingsEntryMode = MutableStateFlow(
         SettingsEntryMode.fromPersistedId(preferences.getString("settings_entry_mode", null)),
+    )
+    override val handwritingLanguage = MutableStateFlow(
+        HandwritingLanguage.fromPersistedId(preferences.getString("handwriting_language", null)),
     )
     override suspend fun setPortraitLocked(locked: Boolean) {
         if (preferences.edit().putBoolean("portrait_locked", locked).commit()) portraitLocked.value = locked
@@ -202,6 +196,11 @@ private class SharedPaperPreferences(context: Context) : PaperPreferences {
     override suspend fun setSettingsEntryMode(mode: SettingsEntryMode) {
         if (preferences.edit().putString("settings_entry_mode", mode.persistedId).commit()) {
             settingsEntryMode.value = mode
+        }
+    }
+    override suspend fun setHandwritingLanguage(language: HandwritingLanguage) {
+        if (preferences.edit().putString("handwriting_language", language.persistedId).commit()) {
+            handwritingLanguage.value = language
         }
     }
 }

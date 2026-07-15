@@ -12,6 +12,7 @@
     <string name="paper_cancelled">回复已取消</string>
     <string name="paper_surface_label">魔法纸书写区域</string>
     <string name="paper_interrupted">上一次回复已中断</string>
+    <string name="paper_configuration_required">请先配置并选择模型服务商，再发送内容。</string>
     <string name="paper_failed">回复失败</string>
     <string name="paper_cancel">取消</string>
     <string name="paper_open_settings">打开魔法设置</string>

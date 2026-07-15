@@ -31,6 +31,7 @@ class TurnInputRouter(
         capabilities: ModelCapabilities,
         strokes: List<PaperStroke>,
         geometry: PageGeometry,
+        handwritingLanguageTag: String? = null,
         onRecognitionStatus: (HandwritingRecognitionStatus) -> Unit = {},
     ): Result<TurnInput> {
         if (capabilities.vision) {
@@ -41,11 +42,11 @@ class TurnInputRouter(
         }
 
         return try {
-            recognizer.recognize(strokes, localeProvider(), onRecognitionStatus).fold(
+            val locale = handwritingLanguageTag?.let(Locale::forLanguageTag) ?: localeProvider()
+            recognizer.recognize(strokes, locale, onRecognitionStatus).fold(
                 onSuccess = { text ->
-                    val recognizedText = text.trim()
-                    if (recognizedText.isEmpty()) Result.failure(InputRoutingError.BlankRecognition)
-                    else Result.success(TurnInput.RecognizedText(recognizedText))
+                    if (text.isBlank()) Result.failure(InputRoutingError.BlankRecognition)
+                    else Result.success(TurnInput.RecognizedText(text))
                 },
                 onFailure = { failure ->
                     val error = failure as? HandwritingRecognitionError

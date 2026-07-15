@@ -27,11 +27,17 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.riddle.magicpaper.paper.MagicPaperView
 import dev.riddle.magicpaper.paper.PaperIntent
 import dev.riddle.magicpaper.conversation.FakeModelProvider
+import dev.riddle.magicpaper.model.FinishReason
+import dev.riddle.magicpaper.model.ModelCapabilities
+import dev.riddle.magicpaper.model.ModelEvent
 import dev.riddle.magicpaper.paperui.PaperPhase
 import dev.riddle.magicpaper.paperui.PaperUiIntent
+import dev.riddle.magicpaper.paperui.SelectedModel
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -136,7 +142,19 @@ class MagicPaperFlowTest {
     @Test fun page_raster_geometry_tracks_the_current_window_instead_of_application_construction() {
         val container = (compose.activity.application as RiddleApplication).container
         runBlocking { container.profileRepository.select(null) }
-        val fakeProvider = container.fakeProvider
+        val fakeProvider = FakeModelProvider(flow {
+            delay(500)
+            emit(ModelEvent.TextDelta("The paper remembers."))
+            delay(500)
+            emit(ModelEvent.Completed(FinishReason.STOP))
+        })
+        container.selectModelForTests(
+            SelectedModel(
+                fakeProvider,
+                "fake",
+                ModelCapabilities(streaming = true, vision = true),
+            ),
+        )
         compose.activity.paperViewModel.onIntent(PaperUiIntent.Cancel)
         compose.waitUntil(2_000) { !compose.activity.paperViewModel.state.value.canCancel }
         runBlocking { container.memoryRepository.clearDraft() }
@@ -170,7 +188,7 @@ class MagicPaperFlowTest {
         drawAcrossSafeBounds(paper, landscapeGeometry)
         compose.waitUntil(12_000) { fakeProvider.recordedRequests.size == 1 }
         val geometryAtProviderRequest = checkNotNull(container.pageGeometry.snapshot())
-        val landscapeImage = decodeProviderImage(fakeProvider.recordedRequests.single().messages.single().imageDataUrl)
+        val landscapeImage = decodeProviderImage(fakeProvider.recordedRequests.single().messages.last().imageDataUrl)
         assertTrue(
             "landscape PNG ${landscapeImage.width}x${landscapeImage.height}, " +
                 "claimed=$landscapeGeometry, final=$geometryAtProviderRequest",
@@ -195,7 +213,7 @@ class MagicPaperFlowTest {
         val portraitGeometry = checkNotNull(container.pageGeometry.snapshot())
         drawAcrossSafeBounds(paper, portraitGeometry)
         compose.waitUntil(12_000) { fakeProvider.recordedRequests.size == 2 }
-        val portraitImage = decodeProviderImage(fakeProvider.recordedRequests.last().messages.single().imageDataUrl)
+        val portraitImage = decodeProviderImage(fakeProvider.recordedRequests.last().messages.last().imageDataUrl)
         assertTrue(
             "portrait PNG ${portraitImage.width}x${portraitImage.height}, safe=${portraitGeometry.safeBounds}",
             portraitImage.height > portraitImage.width,

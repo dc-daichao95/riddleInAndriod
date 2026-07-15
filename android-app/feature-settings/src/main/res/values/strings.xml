@@ -5,6 +5,11 @@
     <string name="settings_entry_title">Open settings with</string>
     <string name="settings_entry_magic_rune">Magic rune button</string>
     <string name="settings_entry_three_finger">Three-finger hold (legacy)</string>
+    <string name="handwriting_language_title">Handwriting language</string>
+    <string name="handwriting_language_automatic">Automatic</string>
+    <string name="handwriting_language_simplified_chinese">Simplified Chinese</string>
+    <string name="handwriting_language_traditional_chinese">Traditional Chinese</string>
+    <string name="handwriting_language_english">English</string>
     <string name="provider_settings_title">Model providers</string>
     <string name="provider_presets_label">Provider presets</string>
     <string name="provider_preset_openai">OpenAI</string>

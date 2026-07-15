@@ -80,6 +80,10 @@ class MainActivity : ComponentActivity() {
                         onSettingsEntryModeChange = {
                             paperViewModel.onIntent(PaperUiIntent.SetSettingsEntryMode(it))
                         },
+                        handwritingLanguage = state.handwritingLanguage,
+                        onHandwritingLanguageChange = {
+                            paperViewModel.onIntent(PaperUiIntent.SetHandwritingLanguage(it))
+                        },
                         onBack = {
                             settingsVisible = false
                             paperViewModel.onIntent(PaperUiIntent.SettingsClosed)

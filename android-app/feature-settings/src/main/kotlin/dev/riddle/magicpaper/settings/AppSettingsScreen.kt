@@ -26,6 +26,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import dev.riddle.magicpaper.model.SettingsEntryMode
+import dev.riddle.magicpaper.model.HandwritingLanguage
 
 @Composable
 fun AppSettingsScreen(
@@ -33,6 +34,8 @@ fun AppSettingsScreen(
     onPortraitLockedChange: (Boolean) -> Unit,
     settingsEntryMode: SettingsEntryMode = SettingsEntryMode.MAGIC_RUNE_BUTTON,
     onSettingsEntryModeChange: (SettingsEntryMode) -> Unit = {},
+    handwritingLanguage: HandwritingLanguage = HandwritingLanguage.AUTOMATIC,
+    onHandwritingLanguageChange: (HandwritingLanguage) -> Unit = {},
     onBack: () -> Unit,
     providerSettings: @Composable () -> Unit,
     modifier: Modifier = Modifier,
@@ -90,10 +93,40 @@ fun AppSettingsScreen(
                 Text(stringResource(entryModeLabel(mode)), Modifier.padding(start = 8.dp))
             }
         }
+        Text(
+            stringResource(R.string.handwriting_language_title),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        )
+        HandwritingLanguage.entries.forEach { language ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .selectable(
+                        selected = handwritingLanguage == language,
+                        onClick = { onHandwritingLanguageChange(language) },
+                        role = Role.RadioButton,
+                    )
+                    .testTag("handwriting_language_${language.persistedId}")
+                    .padding(horizontal = 24.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = handwritingLanguage == language, onClick = null)
+                Text(stringResource(handwritingLanguageLabel(language)), Modifier.padding(start = 8.dp))
+            }
+        }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             providerSettings()
         }
     }
+}
+
+private fun handwritingLanguageLabel(language: HandwritingLanguage): Int = when (language) {
+    HandwritingLanguage.AUTOMATIC -> R.string.handwriting_language_automatic
+    HandwritingLanguage.SIMPLIFIED_CHINESE -> R.string.handwriting_language_simplified_chinese
+    HandwritingLanguage.TRADITIONAL_CHINESE -> R.string.handwriting_language_traditional_chinese
+    HandwritingLanguage.ENGLISH -> R.string.handwriting_language_english
 }
 
 private fun entryModeLabel(mode: SettingsEntryMode): Int = when (mode) {

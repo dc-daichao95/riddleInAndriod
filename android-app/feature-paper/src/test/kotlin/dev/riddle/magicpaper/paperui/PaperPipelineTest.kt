@@ -8,6 +8,7 @@ import dev.riddle.magicpaper.conversation.ConversationOrchestrator
 import dev.riddle.magicpaper.conversation.ConversationStateMachine
 import dev.riddle.magicpaper.conversation.FakeModelProvider
 import dev.riddle.magicpaper.conversation.HandwritingRecognizer
+import dev.riddle.magicpaper.model.HandwritingLanguage
 import dev.riddle.magicpaper.conversation.HandwritingRecognitionError
 import dev.riddle.magicpaper.conversation.HandwritingRecognitionStatus
 import dev.riddle.magicpaper.conversation.TurnInputRouter
@@ -57,7 +58,7 @@ class PaperPipelineTest {
         dispatcher.scheduler.runCurrent()
         assertEquals(PaperPhase.Thinking, viewModel.state.value.phase)
         assertTrue(viewModel.state.value.canCancel)
-        assertEquals("what is written", provider.recordedRequests.single().messages.single().text)
+        assertEquals("what is written", provider.recordedRequests.single().messages.last().text)
         assertEquals(1, recognizer.calls)
 
         events.emit(ModelEvent.TextDelta("answer"))
@@ -68,6 +69,51 @@ class PaperPipelineTest {
         assertEquals(PaperPhase.Completed, viewModel.state.value.phase)
         assertFalse(viewModel.state.value.canCancel)
         assertFalse(persistence.current.interrupted)
+    }
+
+    @Test fun `simplified Chinese selection reaches recognizer and provider without changing source`() = runTest(dispatcher) {
+        val provider = FakeModelProvider(listOf(ModelEvent.Completed(FinishReason.STOP)))
+        val recognizer = RecordingRecognizer("  你好，魔法纸。\n")
+        val preferences = PipelinePreferences(HandwritingLanguage.SIMPLIFIED_CHINESE)
+        val viewModel = pipelineViewModel(provider, PipelinePersistence(), recognizer, preferences)
+
+        draw(viewModel)
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+
+        assertEquals("zh-Hans", recognizer.lastLocale?.toLanguageTag())
+        val request = provider.recordedRequests.single()
+        assertEquals(MessageRole.SYSTEM, request.messages[0].role)
+        assertTrue(request.messages[0].text.contains("zh-Hans"))
+        assertEquals("  你好，魔法纸。\n", request.messages[1].text)
+    }
+
+    @Test fun `missing provider requires configuration without recognition or network`() = runTest(dispatcher) {
+        val recognizer = RecordingRecognizer("must not run")
+        val viewModel = PaperViewModel(
+            modelSelection = ModelSelection { null },
+            persistence = PipelinePersistence(),
+            preferences = PipelinePreferences(),
+            turnInputRouter = TurnInputRouter(
+                PageRasterizer(File("build/tmp/no-provider"), dispatcher = dispatcher),
+                recognizer,
+            ),
+            pageGeometry = AtomicPageGeometryPort(PageGeometry.fullPage(1_000, 1_000)),
+            stateMachine = ConversationStateMachine(),
+            orchestratorFactory = { error("No provider may be created") },
+            savedStateHandle = SavedStateHandle(),
+            workerDispatcher = dispatcher,
+            clock = TestAppClock(dispatcher.scheduler),
+        ).apply { onIntent(PaperUiIntent.SetMotionScale(0f)) }
+
+        draw(viewModel)
+        val ink = viewModel.state.value.renderModel.strokes
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+
+        assertEquals(PaperPhase.ConfigurationRequired, viewModel.state.value.phase)
+        assertEquals(0, recognizer.calls)
+        assertEquals(ink, viewModel.state.value.renderModel.strokes)
     }
 
     @Test fun `question mark shows help without recognition or provider request`() = runTest(dispatcher) {
@@ -399,7 +445,7 @@ class PaperPipelineTest {
         advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
         advanceUntilIdle()
 
-        assertTrue(provider.recordedRequests.single().messages.single().imageDataUrl?.startsWith("data:image/png;base64,") == true)
+        assertTrue(provider.recordedRequests.single().messages.last().imageDataUrl?.startsWith("data:image/png;base64,") == true)
         assertTrue(directory.listFiles().orEmpty().none { it.name.startsWith("riddle-page-") })
     }
 
@@ -619,8 +665,10 @@ class PaperPipelineTest {
 
 private class RecordingRecognizer(private val result: String) : HandwritingRecognizer {
     var calls = 0
+    var lastLocale: Locale? = null
     override suspend fun recognize(strokes: List<PaperStroke>, locale: Locale): Result<String> {
         calls++
+        lastLocale = locale
         return Result.success(result)
     }
 }
@@ -682,12 +730,18 @@ private class PhaseCancellationPersistence(blockMarker: Boolean) : PaperPersiste
     override suspend fun clearStreamingAndDraft() { current = PaperRecovery() }
 }
 
-private class PipelinePreferences : PaperPreferences {
+private class PipelinePreferences(
+    initialLanguage: HandwritingLanguage = HandwritingLanguage.AUTOMATIC,
+) : PaperPreferences {
     override val portraitLocked = MutableStateFlow(false)
     override val settingsEntryMode = MutableStateFlow(dev.riddle.magicpaper.model.SettingsEntryMode.MAGIC_RUNE_BUTTON)
+    override val handwritingLanguage = MutableStateFlow(initialLanguage)
     override suspend fun setPortraitLocked(locked: Boolean) { portraitLocked.value = locked }
     override suspend fun setSettingsEntryMode(mode: dev.riddle.magicpaper.model.SettingsEntryMode) {
         settingsEntryMode.value = mode
+    }
+    override suspend fun setHandwritingLanguage(language: HandwritingLanguage) {
+        handwritingLanguage.value = language
     }
 }
 

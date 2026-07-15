@@ -10,6 +10,7 @@
     <string name="paper_cancelled">Reply cancelled</string>
     <string name="paper_surface_label">Magic paper writing surface</string>
     <string name="paper_interrupted">Previous reply was interrupted</string>
+    <string name="paper_configuration_required">Configure and select a model provider before sending.</string>
     <string name="paper_failed">Reply failed</string>
     <string name="paper_recognition_preparation_failed">Handwriting recognition could not be prepared. Your ink is still on the paper.</string>
     <string name="paper_recognition_failed">Handwriting could not be recognized. Your ink is still on the paper.</string>

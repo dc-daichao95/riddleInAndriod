@@ -5,6 +5,11 @@
     <string name="settings_entry_title">设置入口</string>
     <string name="settings_entry_magic_rune">魔法符文按钮</string>
     <string name="settings_entry_three_finger">三指长按（旧版）</string>
+    <string name="handwriting_language_title">手写识别语言</string>
+    <string name="handwriting_language_automatic">自动</string>
+    <string name="handwriting_language_simplified_chinese">简体中文</string>
+    <string name="handwriting_language_traditional_chinese">繁体中文</string>
+    <string name="handwriting_language_english">英语</string>
     <string name="provider_settings_title">模型服务商</string>
     <string name="provider_presets_label">服务商预设</string>
     <string name="provider_preset_openai">OpenAI</string>

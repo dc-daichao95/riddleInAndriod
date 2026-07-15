@@ -34,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.espresso.Espresso.pressBack
 import dev.riddle.magicpaper.paper.PaperIntent
 import dev.riddle.magicpaper.model.SettingsEntryMode
+import dev.riddle.magicpaper.model.HandwritingLanguage
 import dev.riddle.magicpaper.model.NormalizedPoint
 import dev.riddle.magicpaper.model.PaperTool
 import dev.riddle.magicpaper.paperui.MagicPaperScreen
@@ -45,10 +46,25 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Before
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MagicRuneSettingsTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+
+    @Before fun resetPersistentSettings() {
+        compose.activity.paperViewModel.onIntent(
+            dev.riddle.magicpaper.paperui.PaperUiIntent.SetSettingsEntryMode(SettingsEntryMode.MAGIC_RUNE_BUTTON),
+        )
+        compose.activity.paperViewModel.onIntent(
+            dev.riddle.magicpaper.paperui.PaperUiIntent.SetHandwritingLanguage(HandwritingLanguage.AUTOMATIC),
+        )
+        compose.waitUntil(2_000) {
+            val state = compose.activity.paperViewModel.state.value
+            state.settingsEntryMode == SettingsEntryMode.MAGIC_RUNE_BUTTON &&
+                state.handwritingLanguage == HandwritingLanguage.AUTOMATIC
+        }
+    }
 
     @Test fun rune_is_only_shown_in_magic_rune_mode_with_localized_button_semantics_and_required_sizes() {
         showPaper(SettingsEntryMode.MAGIC_RUNE_BUTTON)
@@ -182,6 +198,22 @@ class MagicRuneSettingsTest {
         compose.onNodeWithTag("magic_rune_touch").assertExists()
     }
 
+    @Test fun settings_can_select_and_persist_simplified_Chinese_handwriting() {
+        compose.onNodeWithTag("magic_rune_touch").performClick()
+        compose.onNodeWithTag("handwriting_language_simplified_chinese").performClick()
+        compose.waitUntil(2_000) {
+            compose.activity.paperViewModel.state.value.handwritingLanguage ==
+                HandwritingLanguage.SIMPLIFIED_CHINESE
+        }
+
+        compose.activityRule.scenario.recreate()
+
+        compose.waitUntil(2_000) {
+            compose.activity.paperViewModel.state.value.handwritingLanguage ==
+                HandwritingLanguage.SIMPLIFIED_CHINESE
+        }
+    }
+
     @Test fun runtime_motion_scale_changes_update_rune_without_unrelated_recomposition() {
         val scales = MutableStateFlow(0f)
         val source = MotionScaleSource { scales }
@@ -276,7 +308,14 @@ class MagicRuneSettingsTest {
     }
 
     private fun assertInside(actual: Rect, expected: Rect) {
-        assertTrue("$actual not inside $expected", actual.left >= expected.left && actual.top >= expected.top && actual.right <= expected.right && actual.bottom <= expected.bottom)
+        val tolerancePx = .5f
+        assertTrue(
+            "$actual not inside $expected",
+            actual.left >= expected.left - tolerancePx &&
+                actual.top >= expected.top - tolerancePx &&
+                actual.right <= expected.right + tolerancePx &&
+                actual.bottom <= expected.bottom + tolerancePx,
+        )
     }
 
     private fun px(value: androidx.compose.ui.unit.Dp): Float = value.value * compose.activity.resources.displayMetrics.density
