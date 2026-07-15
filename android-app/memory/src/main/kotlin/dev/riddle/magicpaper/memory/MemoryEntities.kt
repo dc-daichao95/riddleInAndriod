@@ -89,6 +89,30 @@ data class DraftPointEntity(
     val radius: Float,
 )
 
+@Entity(
+    tableName = "active_reply_runs",
+    foreignKeys = [
+        ForeignKey(
+            entity = DraftPageEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["draftId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["draftId"])],
+)
+data class ActiveReplyRunEntity(
+    @androidx.room.PrimaryKey val id: Int = SINGLETON_ID,
+    val runId: String,
+    val draftId: Int = DraftPageEntity.SINGLETON_ID,
+    val draftRevision: Long,
+    val partialReplySourceText: String,
+    val status: String,
+    val updatedAtEpochMillis: Long,
+) {
+    companion object { const val SINGLETON_ID = 0 }
+}
+
 data class CompletedMemoryPage(
     val pageId: String,
     val completedAtEpochMillis: Long,
@@ -113,6 +137,32 @@ enum class MemoryPageStatus(val persistedValue: String) {
 data class DraftPage(
     val revision: Long,
     val strokes: List<PaperStroke>,
+)
+
+data class ActiveReplyRun(
+    val runId: String,
+    val draftRevision: Long,
+    val partialReplySourceText: String,
+    val status: ActiveReplyRunStatus,
+    val updatedAtEpochMillis: Long,
+)
+
+enum class ActiveReplyRunStatus(val persistedValue: String) {
+    ACTIVE("ACTIVE"),
+    INTERRUPTED("INTERRUPTED"),
+    COMPLETED("COMPLETED"),
+    CANCELLED("CANCELLED");
+
+    companion object {
+        fun fromPersistedValue(value: String): ActiveReplyRunStatus = entries.singleOrNull {
+            it.persistedValue == value
+        } ?: throw IllegalStateException("Unknown active reply run status")
+    }
+}
+
+data class RecoveredReplyRun(
+    val draft: DraftPage,
+    val run: ActiveReplyRun,
 )
 
 data class DialogueTurn(

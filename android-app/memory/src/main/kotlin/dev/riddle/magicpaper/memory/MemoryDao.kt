@@ -74,4 +74,39 @@ interface MemoryDao {
 
     @Query("DELETE FROM draft_pages")
     suspend fun deleteDraft()
+
+    @Query(
+        "INSERT INTO active_reply_runs (id, runId, draftId, draftRevision, partialReplySourceText, status, updatedAtEpochMillis) " +
+            "SELECT :id, :runId, :draftId, :draftRevision, :partialReplySourceText, :status, :updatedAtEpochMillis " +
+            "WHERE :id = 0 " +
+            "ON CONFLICT(id) DO UPDATE SET " +
+            "runId = excluded.runId, " +
+            "draftId = excluded.draftId, " +
+            "draftRevision = excluded.draftRevision, " +
+            "partialReplySourceText = excluded.partialReplySourceText, " +
+            "status = excluded.status, " +
+            "updatedAtEpochMillis = excluded.updatedAtEpochMillis",
+    )
+    suspend fun upsertActiveReplyRun(
+        id: Int,
+        runId: String,
+        draftId: Int,
+        draftRevision: Long,
+        partialReplySourceText: String,
+        status: String,
+        updatedAtEpochMillis: Long,
+    ): Long
+
+    @Query("SELECT * FROM active_reply_runs WHERE id = 0")
+    suspend fun activeReplyRun(): ActiveReplyRunEntity?
+
+    @Query(
+        "UPDATE active_reply_runs SET status = :status, updatedAtEpochMillis = :updatedAtEpochMillis " +
+            "WHERE id = 0 AND runId = :runId AND status = 'ACTIVE'",
+    )
+    suspend fun resolveActiveReplyRun(
+        runId: String,
+        status: String,
+        updatedAtEpochMillis: Long,
+    ): Int
 }

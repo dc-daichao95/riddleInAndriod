@@ -81,12 +81,91 @@ class RoomMemoryRepository(
         true
     }
 
+    suspend fun replaceDraftAndRecordActiveReplyRun(
+        draft: DraftPage,
+        runId: String,
+        partialReplySourceText: String,
+        updatedAtEpochMillis: Long,
+    ): Boolean = database.withTransaction {
+        val current = dao.draft()
+        if (current != null && draft.revision <= current.revision) return@withTransaction false
+        dao.deleteDraft()
+        dao.insertDraft(DraftPageEntity(revision = draft.revision))
+        dao.insertDraftPoints(draft.strokes.toDraftPoints())
+        dao.upsertActiveReplyRun(
+            id = ActiveReplyRunEntity.SINGLETON_ID,
+            runId = runId,
+            draftId = DraftPageEntity.SINGLETON_ID,
+            draftRevision = draft.revision,
+            partialReplySourceText = partialReplySourceText,
+            status = ActiveReplyRunStatus.ACTIVE.persistedValue,
+            updatedAtEpochMillis = updatedAtEpochMillis,
+        )
+        true
+    }
+
     suspend fun loadDraft(): DraftPage? = database.withTransaction {
         val draft = dao.draft() ?: return@withTransaction null
         DraftPage(draft.revision, dao.draftPoints().toDraftStrokes())
     }
 
     suspend fun clearDraft() = database.withTransaction { dao.deleteDraft() }
+
+    suspend fun recordActiveReplyRun(
+        runId: String,
+        draftRevision: Long,
+        partialReplySourceText: String,
+        updatedAtEpochMillis: Long,
+    ): Boolean = database.withTransaction {
+        val draft = dao.draft()
+        if (draft == null || draft.revision != draftRevision) return@withTransaction false
+        dao.upsertActiveReplyRun(
+            id = ActiveReplyRunEntity.SINGLETON_ID,
+            runId = runId,
+            draftId = DraftPageEntity.SINGLETON_ID,
+            draftRevision = draftRevision,
+            partialReplySourceText = partialReplySourceText,
+            status = ActiveReplyRunStatus.ACTIVE.persistedValue,
+            updatedAtEpochMillis = updatedAtEpochMillis,
+        )
+        true
+    }
+
+    suspend fun activeReplyRun(): ActiveReplyRun? = database.withTransaction {
+        dao.activeReplyRun()?.toDomain()
+    }
+
+    suspend fun recoverActiveReplyRun(interruptedAtEpochMillis: Long): RecoveredReplyRun? = database.withTransaction {
+        val active = dao.activeReplyRun() ?: return@withTransaction null
+        if (active.status != ActiveReplyRunStatus.ACTIVE.persistedValue) return@withTransaction null
+        if (dao.resolveActiveReplyRun(
+                runId = active.runId,
+                status = ActiveReplyRunStatus.INTERRUPTED.persistedValue,
+                updatedAtEpochMillis = interruptedAtEpochMillis,
+            ) != 1
+        ) return@withTransaction null
+        val draft = dao.draft() ?: return@withTransaction null
+        RecoveredReplyRun(
+            draft = DraftPage(draft.revision, dao.draftPoints().toDraftStrokes()),
+            run = active.copy(
+                status = ActiveReplyRunStatus.INTERRUPTED.persistedValue,
+                updatedAtEpochMillis = interruptedAtEpochMillis,
+            ).toDomain(),
+        )
+    }
+
+    suspend fun resolveActiveReplyRun(
+        runId: String,
+        status: ActiveReplyRunStatus,
+        updatedAtEpochMillis: Long,
+    ): Boolean {
+        require(status == ActiveReplyRunStatus.COMPLETED || status == ActiveReplyRunStatus.CANCELLED) {
+            "Only completed or cancelled runs can be resolved"
+        }
+        return database.withTransaction {
+            dao.resolveActiveReplyRun(runId, status.persistedValue, updatedAtEpochMillis) == 1
+        }
+    }
 
     private fun CompletedMemoryPage.toEntity() = MemoryPageEntity(
         pageId = pageId,
@@ -174,6 +253,14 @@ class RoomMemoryRepository(
         DraftPointEntity::x,
         DraftPointEntity::y,
         DraftPointEntity::radius,
+    )
+
+    private fun ActiveReplyRunEntity.toDomain() = ActiveReplyRun(
+        runId = runId,
+        draftRevision = draftRevision,
+        partialReplySourceText = partialReplySourceText,
+        status = ActiveReplyRunStatus.fromPersistedValue(status),
+        updatedAtEpochMillis = updatedAtEpochMillis,
     )
 
     companion object {
