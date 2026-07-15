@@ -36,6 +36,8 @@ import dev.riddle.magicpaper.settings.ProviderSettingsScreen
 import dev.riddle.magicpaper.settings.ProviderSettingsUiState
 import dev.riddle.magicpaper.settings.ProviderProfileUiModel
 import dev.riddle.magicpaper.settings.ProviderSetupStage
+import dev.riddle.magicpaper.settings.ProviderModelSelection
+import dev.riddle.magicpaper.settings.ManualFallbackReason
 import dev.riddle.magicpaper.model.ModelCapabilities
 import dev.riddle.magicpaper.model.ProviderConfiguration
 import dev.riddle.magicpaper.model.ProviderType
@@ -137,7 +139,12 @@ class ProviderSetupTest {
                         state = ProviderSettingsUiState(
                             setupStage = ProviderSetupStage.CREDENTIAL_VALIDATION,
                             confirmedHost = "api.example.com",
+                            editor = dev.riddle.magicpaper.settings.ProviderEditorUiState(modelId = "preset-model"),
                             manualModelAllowed = true,
+                            modelSelection = ProviderModelSelection.ManualFallback(
+                                "preset-model",
+                                ManualFallbackReason.UNSUPPORTED_DISCOVERY,
+                            ),
                         ),
                         onReviewEndpoint = {},
                         onValidateAndDiscover = { _, _, _, _ -> },
@@ -150,6 +157,7 @@ class ProviderSetupTest {
             }
         }
         compose.onNodeWithTag("provider_manual_disclosure").assertExists()
+        compose.onNodeWithTag("provider_manual_model").assertTextContains("preset-model")
         compose.onNodeWithTag("provider_manual_model").performTextReplacement("manual-model")
         compose.waitForIdle()
         compose.onNodeWithTag("provider_manual_model").assertTextContains("manual-model")

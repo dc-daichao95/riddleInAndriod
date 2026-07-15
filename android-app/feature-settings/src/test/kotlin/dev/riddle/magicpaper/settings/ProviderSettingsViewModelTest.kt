@@ -324,6 +324,75 @@ class ProviderSettingsViewModelTest {
         assertFalse(vm.state.value.toString().contains("sentinel-api-key"))
     }
 
+    @Test fun `catalog discovery retains the preset model when it is available`() = runTest {
+        val vm = viewModel(factory = RecordingFactory(
+            ValidationResult.Valid,
+            ModelDiscoveryResult.Success(listOf(
+                ModelDescriptor("a-model", "A", ModelCapabilities(streaming = true)),
+                ModelDescriptor("gpt-test", "Preset", ModelCapabilities(streaming = true)),
+            )),
+        ))
+
+        vm.validateAndDiscover(draft(), "secret", "api.openai.com")
+
+        assertEquals(listOf("a-model", "gpt-test"), vm.state.value.discoveredModels.map { it.id })
+        assertEquals("gpt-test", vm.state.value.selectedDiscoveredModelId)
+        assertIs<ProviderModelSelection.Catalog>(vm.state.value.modelSelection)
+    }
+
+    @Test fun `unsupported discovery preserves the preset as the manual fallback`() = runTest {
+        val vm = viewModel(factory = RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Unsupported))
+
+        assertEquals(SettingsOperation.ManualModelRequired, vm.validateAndDiscover(draft(), "secret", "api.openai.com"))
+
+        assertTrue(vm.state.value.manualModelAllowed)
+        assertEquals("gpt-test", vm.state.value.selectedDiscoveredModelId)
+        assertEquals(
+            ProviderModelSelection.ManualFallback("gpt-test", ManualFallbackReason.UNSUPPORTED_DISCOVERY),
+            vm.state.value.modelSelection,
+        )
+    }
+
+    @Test fun `empty discovery preserves the preset as the manual fallback`() = runTest {
+        val vm = viewModel(factory = RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Success(emptyList())))
+
+        assertEquals(SettingsOperation.ManualModelRequired, vm.validateAndDiscover(draft(), "secret", "api.openai.com"))
+
+        assertTrue(vm.state.value.manualModelAllowed)
+        assertEquals("gpt-test", vm.state.value.selectedDiscoveredModelId)
+        assertEquals(
+            ProviderModelSelection.ManualFallback("gpt-test", ManualFallbackReason.EMPTY_CATALOG),
+            vm.state.value.modelSelection,
+        )
+    }
+
+    @Test fun `manual fallback cannot persist until minimum completion validation succeeds`() = runTest {
+        val profiles = FakeProfiles()
+        val vm = viewModel(profiles, factory = RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Unsupported))
+        vm.validateAndDiscover(draft(), "secret", "api.openai.com")
+
+        assertEquals(SettingsOperation.Failed(SettingsError.InvalidEndpoint), vm.saveValidatedProfile())
+        assertTrue(profiles.items.isEmpty())
+
+        assertEquals(SettingsOperation.Success, vm.validateManualModel("gpt-test"))
+        assertEquals(SettingsOperation.Success, vm.saveValidatedProfile())
+        assertEquals("gpt-test", profiles.items.single().defaultModelId)
+    }
+
+    @Test fun `abandoning manual fallback removes every selectable unvalidated model`() = runTest {
+        val profiles = FakeProfiles()
+        val vm = viewModel(profiles, factory = RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Unsupported))
+        vm.validateAndDiscover(draft(), "secret", "api.openai.com")
+
+        assertEquals(SettingsOperation.Success, vm.abandonEditor())
+
+        assertFalse(vm.state.value.manualModelAllowed)
+        assertNull(vm.state.value.selectedDiscoveredModelId)
+        assertTrue(vm.state.value.discoveredModels.isEmpty())
+        assertTrue(profiles.items.isEmpty())
+        assertNull(profiles.selected)
+    }
+
     @Test fun `unsupported discovery requires explicit manual fallback before validation`() = runTest {
         val factory = RecordingFactory(ValidationResult.Valid, ModelDiscoveryResult.Unsupported)
         val vm = viewModel(factory = factory)

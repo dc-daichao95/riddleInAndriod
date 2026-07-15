@@ -54,6 +54,14 @@ data class ProviderPreset(
 
 enum class ValidationStatus { NotTested, Testing, Valid, Invalid }
 enum class ProviderSetupStage { ENDPOINT, CREDENTIAL_VALIDATION, MODEL_SELECTION }
+enum class ManualFallbackReason { UNSUPPORTED_DISCOVERY, EMPTY_CATALOG }
+
+sealed interface ProviderModelSelection {
+    data object None : ProviderModelSelection
+    data class Catalog(val models: List<ModelDescriptor>, val selectedModelId: String) : ProviderModelSelection
+    data class ManualFallback(val presetModelId: String, val reason: ManualFallbackReason) : ProviderModelSelection
+    data class ValidatedManual(val model: ModelDescriptor) : ProviderModelSelection
+}
 
 data class ProviderProfileUiModel(
     val configuration: ProviderConfiguration,
@@ -86,6 +94,7 @@ data class ProviderSettingsUiState(
     val selectedDiscoveredModelId: String? = null,
     val manualModelAllowed: Boolean = false,
     val discoveryError: ModelError? = null,
+    val modelSelection: ProviderModelSelection = ProviderModelSelection.None,
 ) {
     val controlsEnabled: Boolean get() = !operationInProgress && !setupInProgress
 }
@@ -118,6 +127,7 @@ class ProviderSettingsViewModel(
         val profile: ProviderConfiguration,
         val candidate: CandidateCredential?,
         val generation: Long,
+        val presetModelId: String?,
     )
 
     private var pendingValidation: PendingValidation? = null
@@ -211,7 +221,8 @@ class ProviderSettingsViewModel(
             if (candidate != null) credentialTransactions.abandon(candidate)
             return SettingsOperation.Failed(SettingsError.Cancelled)
         }
-        pendingValidation = PendingValidation(temporary, candidate, generation)
+        val presetModelId = draft.defaultModelId?.trim()?.takeIf(String::isNotEmpty)
+        pendingValidation = PendingValidation(temporary, candidate, generation, presetModelId)
         mutableState.value = mutableState.value.copy(
             setupStage = ProviderSetupStage.CREDENTIAL_VALIDATION,
             confirmedHost = host,
@@ -219,6 +230,7 @@ class ProviderSettingsViewModel(
             selectedDiscoveredModelId = null,
             manualModelAllowed = false,
             discoveryError = null,
+            modelSelection = ProviderModelSelection.None,
             error = null,
         )
         return try {
@@ -226,17 +238,20 @@ class ProviderSettingsViewModel(
                 is ModelDiscoveryResult.Success -> {
                     if (generation != setupGeneration) return SettingsOperation.Failed(SettingsError.Cancelled)
                     val models = discovery.models.distinctBy { it.id }.sortedBy { it.id }
-                    if (models.isEmpty()) enableManualFallback(generation)
+                    if (models.isEmpty()) enableManualFallback(generation, ManualFallbackReason.EMPTY_CATALOG)
                     else {
+                        val selectedModelId = presetModelId?.takeIf { preset -> models.any { it.id == preset } }
+                            ?: models.first().id
                         mutableState.value = mutableState.value.copy(
                             setupStage = ProviderSetupStage.MODEL_SELECTION,
                             discoveredModels = models,
-                            selectedDiscoveredModelId = models.first().id,
+                            selectedDiscoveredModelId = selectedModelId,
+                            modelSelection = ProviderModelSelection.Catalog(models, selectedModelId),
                         )
                         SettingsOperation.Success
                     }
                 }
-                ModelDiscoveryResult.Unsupported -> enableManualFallback(generation)
+                ModelDiscoveryResult.Unsupported -> enableManualFallback(generation, ManualFallbackReason.UNSUPPORTED_DISCOVERY)
                 is ModelDiscoveryResult.Failed -> failDiscovery(discovery.error, generation)
             }
         } catch (_: TimeoutCancellationException) {
@@ -273,6 +288,9 @@ class ProviderSettingsViewModel(
                         manualModelAllowed = false,
                         discoveryError = null,
                         error = null,
+                        modelSelection = ProviderModelSelection.ValidatedManual(
+                            ModelDescriptor(modelId.trim(), modelId.trim(), configuration.capabilities),
+                        ),
                     )
                     SettingsOperation.Success
                 }
@@ -292,13 +310,23 @@ class ProviderSettingsViewModel(
 
     fun selectDiscoveredModel(modelId: String) {
         if (mutableState.value.discoveredModels.any { it.id == modelId }) {
-            mutableState.value = mutableState.value.copy(selectedDiscoveredModelId = modelId)
+            val selection = mutableState.value.modelSelection
+            mutableState.value = mutableState.value.copy(
+                selectedDiscoveredModelId = modelId,
+                modelSelection = if (selection is ProviderModelSelection.Catalog) {
+                    selection.copy(selectedModelId = modelId)
+                } else selection,
+            )
         }
     }
 
     suspend fun saveValidatedProfile(): SettingsOperation {
         val pending = pendingValidation ?: return fail(SettingsError.StorageUnavailable)
         if (pending.generation != setupGeneration) return fail(SettingsError.Cancelled)
+        val selection = mutableState.value.modelSelection
+        if (selection !is ProviderModelSelection.Catalog && selection !is ProviderModelSelection.ValidatedManual) {
+            return fail(SettingsError.InvalidEndpoint)
+        }
         val modelId = mutableState.value.selectedDiscoveredModelId ?: return fail(SettingsError.InvalidEndpoint)
         val profile = pending.profile.copy(defaultModelId = modelId)
         val result = pending.candidate?.let { credentialTransactions.commit(it, profile) }
@@ -333,6 +361,7 @@ class ProviderSettingsViewModel(
             selectedDiscoveredModelId = null,
             manualModelAllowed = false,
             discoveryError = null,
+            modelSelection = ProviderModelSelection.None,
         )
     }
 
@@ -351,9 +380,15 @@ class ProviderSettingsViewModel(
         }
     }
 
-    private fun enableManualFallback(generation: Long): SettingsOperation {
+    private fun enableManualFallback(generation: Long, reason: ManualFallbackReason): SettingsOperation {
         if (generation != setupGeneration) return SettingsOperation.Failed(SettingsError.Cancelled)
-        mutableState.value = mutableState.value.copy(manualModelAllowed = true, discoveryError = null)
+        val presetModelId = pendingValidation?.presetModelId.orEmpty()
+        mutableState.value = mutableState.value.copy(
+            manualModelAllowed = true,
+            selectedDiscoveredModelId = presetModelId.takeIf(String::isNotEmpty),
+            discoveryError = null,
+            modelSelection = ProviderModelSelection.ManualFallback(presetModelId, reason),
+        )
         return SettingsOperation.ManualModelRequired
     }
 

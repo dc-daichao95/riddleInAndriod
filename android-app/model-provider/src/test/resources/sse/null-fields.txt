@@ -1,0 +1,4 @@
+data: {"choices":[{"delta":{"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":null}}]},"finish_reason":null}]}
+
+data: [DONE]
+

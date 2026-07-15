@@ -43,6 +43,7 @@ import dev.riddle.magicpaper.settings.CredentialTransactionCoordinator
 import dev.riddle.magicpaper.settings.CredentialTransactionResult
 import dev.riddle.magicpaper.settings.ProviderFactory
 import dev.riddle.magicpaper.settings.ProviderProfileRepository
+import dev.riddle.magicpaper.provider.optNullableString
 import dev.riddle.magicpaper.settings.ProviderSettingsViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -248,7 +249,7 @@ class SharedPreferencesProfileRepository(context: Context) : ProviderProfileRepo
         val capabilities = value.getJSONObject("capabilities")
         return ProviderConfiguration(
             value.getString("id"), ProviderType.valueOf(value.getString("type")), value.getString("name"),
-            value.getString("url"), value.getString("alias"), value.optString("model").takeIf { it.isNotBlank() },
+            value.getString("url"), value.getString("alias"), value.optNullableString("model"),
             value.getBoolean("enabled"), ModelCapabilities(
                 capabilities.getBoolean("streaming"), capabilities.getBoolean("vision"), capabilities.getBoolean("toolCalling"),
                 capabilities.getBoolean("structuredOutput"), capabilities.getBoolean("reasoning"), capabilities.getBoolean("systemMessages"),

@@ -69,6 +69,22 @@ class ProviderContractTest {
         }
     }
 
+    @Test fun `JSON null protocol fields never become literal null text`() = runBlocking {
+        val body = fixture("null-fields.txt")
+        providers(FakeTransport(TransportResponse.Success(flow { emit(body) }))).forEach { provider ->
+            assertEquals(
+                listOf(ModelEvent.Completed(FinishReason.STOP)),
+                provider.stream(request).toList(),
+            )
+        }
+    }
+
+    @Test fun `JSON null provider error message remains absent`() = runBlocking {
+        providers(FakeTransport(TransportResponse.HttpFailure(401, errorBody = "{\"error\":{\"message\":null}}"))).forEach {
+            assertEquals(listOf(ModelEvent.Failed(ModelError.Authentication())), it.stream(request).toList())
+        }
+    }
+
     @Test fun `adapter maps HTTP date retry after using injected clock`() = runBlocking {
         val now = Instant.parse("2026-07-13T00:00:00Z")
         val transport = FakeTransport(TransportResponse.HttpFailure(429, mapOf("Retry-After" to "Mon, 13 Jul 2026 00:00:05 GMT")))

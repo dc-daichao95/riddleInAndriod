@@ -4,6 +4,11 @@ import dev.riddle.magicpaper.model.*
 import org.json.JSONArray
 import org.json.JSONObject
 
+fun JSONObject.optNullableString(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    return opt(name).let { it as? String }?.takeIf { it.isNotBlank() }
+}
+
 object ProviderJson {
     class ToolState {
         internal data class Partial(var id: String? = null, var name: String = "", val arguments: StringBuilder = StringBuilder(), var started: Boolean = false, var completed: Boolean = false)
@@ -34,24 +39,24 @@ object ProviderJson {
             for (index in 0 until choices.length()) {
                 val choice = choices.getJSONObject(index)
                 val delta = choice.optJSONObject("delta") ?: JSONObject()
-                delta.optString("content").takeIf { it.isNotEmpty() }?.let { result += ModelEvent.TextDelta(it) }
-                if (includeReasoning) delta.optString("reasoning_content").takeIf { it.isNotEmpty() }?.let { result += ModelEvent.ReasoningDelta(it) }
+                delta.optNullableString("content")?.let { result += ModelEvent.TextDelta(it) }
+                if (includeReasoning) delta.optNullableString("reasoning_content")?.let { result += ModelEvent.ReasoningDelta(it) }
                 // Tool calls are deliberately parsed as untrusted protocol data, but this layer never executes them.
                 delta.optJSONArray("tool_calls")?.let { calls -> repeat(calls.length()) { callIndex ->
                     val call = calls.getJSONObject(callIndex)
                     val index = call.optInt("index", callIndex)
                     val partial = toolState.calls.getOrPut(index) { ToolState.Partial() }
-                    call.optString("id").takeIf { it.isNotEmpty() }?.let { partial.id = it }
+                    call.optNullableString("id")?.let { partial.id = it }
                     val id = partial.id ?: "index-$index"
                     val function = call.optJSONObject("function") ?: JSONObject()
-                    val name = function.optString("name")
-                    val arguments = function.optString("arguments")
-                    if (name.isNotEmpty()) partial.name += name
-                    if (!partial.started && partial.name.isNotEmpty() && arguments.isNotEmpty()) {
+                    val name = function.optNullableString("name")
+                    val arguments = function.optNullableString("arguments")
+                    if (name != null) partial.name += name
+                    if (!partial.started && partial.name.isNotEmpty() && arguments != null) {
                         partial.started = true
                         result += ModelEvent.ToolCallStarted(id, partial.name)
                     }
-                    if (arguments.isNotEmpty()) { partial.arguments.append(arguments); result += ModelEvent.ToolCallArgumentsDelta(id, arguments) }
+                    if (arguments != null) { partial.arguments.append(arguments); result += ModelEvent.ToolCallArgumentsDelta(id, arguments) }
                 } }
                 if (!choice.isNull("finish_reason")) completion = ModelEvent.Completed(finishReason(choice.getString("finish_reason")))
             }

@@ -39,6 +39,7 @@
     <string name="provider_continue">继续验证凭据</string>
     <string name="provider_validate_models">确认目标、验证密钥并获取模型</string>
     <string name="provider_manual_disclosure">此端点不提供模型列表。手动验证只发送“ping”，最多请求一个输出 token，可能产生费用，并且不会重试。</string>
+    <string name="provider_manual_disclosure_empty">此端点返回了空模型列表。手动验证只发送“ping”，最多请求一个输出 token，可能产生费用，并且不会重试。</string>
     <string name="provider_manual_validate">接受并验证模型</string>
     <string name="provider_api_key_content_description">API 密钥，安全输入。复制、剪切和自动填充已禁用。</string>
     <string name="provider_error_authentication">API 密钥未通过验证。</string>

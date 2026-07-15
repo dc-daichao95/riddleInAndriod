@@ -47,5 +47,6 @@
     <string name="provider_continue">Continue to credential validation</string>
     <string name="provider_validate_models">Confirm host, validate key, and get models</string>
     <string name="provider_manual_disclosure">This endpoint does not provide a model catalog. The manual check sends only “ping”, requests one output token, may be billable, and is not retried.</string>
+    <string name="provider_manual_disclosure_empty">This endpoint returned an empty model catalog. The manual check sends only “ping”, requests one output token, may be billable, and is not retried.</string>
     <string name="provider_manual_validate">Accept and validate model</string>
 </resources>

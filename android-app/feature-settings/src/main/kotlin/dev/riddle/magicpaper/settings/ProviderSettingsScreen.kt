@@ -68,7 +68,10 @@ fun ProviderSettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val credential = remember { TextFieldState() }
-    var manualModel by remember { mutableStateOf("") }
+    val manualFallback = state.modelSelection as? ProviderModelSelection.ManualFallback
+    var manualModel by remember(manualFallback?.presetModelId) {
+        mutableStateOf(manualFallback?.presetModelId.orEmpty())
+    }
     var modelsExpanded by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentAbandon by rememberUpdatedState(onAbandon)
@@ -156,7 +159,11 @@ fun ProviderSettingsScreen(
                         modifier = Modifier.fillMaxWidth().testTag("provider_validate_models"),
                     ) { Text(stringResource(R.string.provider_validate_models)) }
                     if (state.manualModelAllowed) {
-                        Text(stringResource(R.string.provider_manual_disclosure), modifier = Modifier.testTag("provider_manual_disclosure"))
+                        val disclosure = when (manualFallback?.reason) {
+                            ManualFallbackReason.EMPTY_CATALOG -> R.string.provider_manual_disclosure_empty
+                            else -> R.string.provider_manual_disclosure
+                        }
+                        Text(stringResource(disclosure), modifier = Modifier.testTag("provider_manual_disclosure"))
                         OutlinedTextField(manualModel, { manualModel = it }, label = { Text(stringResource(R.string.provider_model_label)) }, modifier = Modifier.fillMaxWidth().testTag("provider_manual_model"))
                         OutlinedButton(onClick = { onValidateManualModel(manualModel) }, enabled = manualModel.isNotBlank(), modifier = Modifier.testTag("provider_manual_validate")) {
                             Text(stringResource(R.string.provider_manual_validate))

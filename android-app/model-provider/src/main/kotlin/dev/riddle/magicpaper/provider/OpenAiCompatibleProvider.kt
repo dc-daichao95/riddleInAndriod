@@ -83,8 +83,9 @@ open class OpenAiCompatibleProvider(
     private fun retryAfterMillis(headers: Map<String, String>): Long? = retryPolicy.retryAfterMillis(headers.entries
         .firstOrNull { it.key.equals("Retry-After", true) }?.value)
 
-    private fun providerError(body: String?): String? = runCatching { org.json.JSONObject(body.orEmpty()).optJSONObject("error")?.optString("message") }
-        .getOrNull()?.takeIf { !it.isNullOrBlank() }
+    private fun providerError(body: String?): String? = runCatching {
+        org.json.JSONObject(body.orEmpty()).optJSONObject("error")?.optNullableString("message")
+    }.getOrNull()
 
     override suspend fun listModels(): ModelDiscoveryResult {
         val request = TransportRequest(configuration.baseUrl.trimEnd('/') + "/models", mapOf("Accept" to "application/json"), "", configuration.credentialAlias, TransportMethod.GET)
