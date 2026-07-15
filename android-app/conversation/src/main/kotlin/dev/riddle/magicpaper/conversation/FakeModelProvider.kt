@@ -24,6 +24,8 @@ class FakeModelProvider(
     val recordedRequests: List<ModelRequest>
         get() = synchronized(requestTrace) { requestTrace.toList() }
 
+    fun clearRecordedRequests() = synchronized(requestTrace) { requestTrace.clear() }
+
     override val descriptor = ProviderDescriptor(
         ProviderType.OPENAI_COMPATIBLE,
         "Deterministic fake",

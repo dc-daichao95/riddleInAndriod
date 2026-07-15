@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PorterDuff
 import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import kotlinx.coroutines.CancellationException
@@ -73,8 +74,6 @@ class RasterizedPage internal constructor(
 
 class PageRasterizer(
     cacheDirectory: File,
-    private val sourceWidth: Int,
-    private val sourceHeight: Int,
     private val paddingPixels: Int = 24,
     private val maxLongSide: Int = 800,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
@@ -86,13 +85,12 @@ class PageRasterizer(
     private val cacheDirectory = cacheDirectory.canonicalFile
 
     init {
-        require(sourceWidth > 0 && sourceHeight > 0)
         require(paddingPixels >= 0)
         require(maxLongSide > 0)
         require(staleAfterMillis >= 0)
     }
 
-    suspend fun rasterize(strokes: List<PaperStroke>): Result<RasterizedPage> {
+    suspend fun rasterize(strokes: List<PaperStroke>, geometry: PageGeometry): Result<RasterizedPage> {
         val pendingPage = AtomicReference<RasterizedPage?>()
         return try {
             withContext(dispatcher) {
@@ -100,7 +98,7 @@ class PageRasterizer(
                     sweepStaleFiles()
                     val visible = strokes.filter { it.tool == PaperTool.PEN && it.points.isNotEmpty() }
                     if (visible.isEmpty()) return@withContext Result.failure(PageRasterizationError.EmptyPage)
-                    val page = render(visible)
+                    val page = render(visible, geometry)
                     pendingPage.set(page)
                     currentCoroutineContext().ensureActive()
                     Result.success(page)
@@ -141,20 +139,25 @@ class PageRasterizer(
         }
     }
 
-    private fun render(strokes: List<PaperStroke>): RasterizedPage {
+    private fun render(strokes: List<PaperStroke>, geometry: PageGeometry): RasterizedPage {
+        val sourceWidth = geometry.pageWidthPx
+        val sourceHeight = geometry.pageHeightPx
+        val safeBounds = geometry.safeBounds
         val radiusScale = min(sourceWidth, sourceHeight).toFloat()
-        val left = max(0, floor(strokes.minOf { stroke ->
+        val left = max(safeBounds.left, floor(strokes.minOf { stroke ->
             stroke.points.minOf { it.x * sourceWidth - it.radius * radiusScale }
         }).toInt() - paddingPixels)
-        val top = max(0, floor(strokes.minOf { stroke ->
+        val top = max(safeBounds.top, floor(strokes.minOf { stroke ->
             stroke.points.minOf { it.y * sourceHeight - it.radius * radiusScale }
         }).toInt() - paddingPixels)
-        val right = min(sourceWidth, ceil(strokes.maxOf { stroke ->
+        val right = min(safeBounds.right, ceil(strokes.maxOf { stroke ->
             stroke.points.maxOf { it.x * sourceWidth + it.radius * radiusScale }
         }).toInt() + paddingPixels)
-        val bottom = min(sourceHeight, ceil(strokes.maxOf { stroke ->
+        val bottom = min(safeBounds.bottom, ceil(strokes.maxOf { stroke ->
             stroke.points.maxOf { it.y * sourceHeight + it.radius * radiusScale }
         }).toInt() + paddingPixels)
+
+        if (right <= left || bottom <= top) throw PageRasterizationError.EmptyPage
 
         val cropWidth = max(1, right - left)
         val cropHeight = max(1, bottom - top)
@@ -162,7 +165,7 @@ class PageRasterizer(
         val outputWidth = max(1, (cropWidth * scale).roundToInt())
         val outputHeight = max(1, (cropHeight * scale).roundToInt())
         val bitmap = Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap).apply { drawColor(Color.WHITE) }
+        val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             strokeCap = Paint.Cap.ROUND
@@ -195,6 +198,8 @@ class PageRasterizer(
         }
 
         try {
+            if (!bitmapHasInk(bitmap)) throw PageRasterizationError.EmptyPage
+            canvas.drawColor(Color.WHITE, PorterDuff.Mode.DST_OVER)
             return PageCacheOwnershipRegistry.withDirectory(cacheDirectory) { ownership ->
                 cacheDirectory.mkdirs()
                 val file = File.createTempFile(PAGE_CACHE_PREFIX, ".png", cacheDirectory)
@@ -218,6 +223,15 @@ class PageRasterizer(
         } finally {
             bitmap.recycle()
         }
+    }
+
+    private fun bitmapHasInk(bitmap: Bitmap): Boolean {
+        val row = IntArray(bitmap.width)
+        repeat(bitmap.height) { y ->
+            bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+            if (row.any { pixel -> Color.alpha(pixel) != 0 }) return true
+        }
+        return false
     }
 
     private companion object {

@@ -16,6 +16,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
@@ -26,16 +27,79 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PageRasterizerTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun `one rasterizer uses each committed page geometry across portrait landscape split and fold bounds`() = runTest {
+        val rasterizer = PageRasterizer(temporaryFolder.root, paddingPixels = 0)
+        val cases = listOf(
+            PageGeometry(100, 200, SafePageBounds(0, 0, 100, 200)) to (100 to 200),
+            PageGeometry(200, 100, SafePageBounds(0, 0, 200, 100)) to (200 to 100),
+            PageGeometry(600, 900, SafePageBounds(10, 20, 590, 880)) to (540 to 800),
+            PageGeometry(2_200, 1_000, SafePageBounds(100, 0, 2_100, 1_000)) to (800 to 400),
+        )
+
+        cases.forEach { (geometry, expected) ->
+            rasterizer.rasterize(
+                listOf(stroke(point(0f, 0f, 0f), point(1f, 1f, 0f))),
+                geometry,
+            ).getOrThrow().use { page ->
+                assertEquals(expected.first, page.width)
+                assertEquals(expected.second, page.height)
+            }
+        }
+    }
+
+    @Test
+    fun `ink completely outside committed safe bounds is rejected`() = runTest {
+        val rasterizer = PageRasterizer(temporaryFolder.root, paddingPixels = 0)
+        val result = rasterizer.rasterize(
+            listOf(stroke(point(.05f, .05f, .01f))),
+            PageGeometry(1_000, 1_000, SafePageBounds(200, 200, 900, 900)),
+        )
+
+        assertIs<PageRasterizationError.EmptyPage>(result.exceptionOrNull())
+    }
+
+    @Test
+    fun `aggregate overlap without actual safe ink is rejected before encoding`() = runTest {
+        var encodes = 0
+        val rasterizer = PageRasterizer(
+            temporaryFolder.root,
+            paddingPixels = 0,
+            imageEncoder = PageImageEncoder { _, _ -> encodes += 1 },
+        )
+        val safeGeometry = PageGeometry(1_000, 1_000, SafePageBounds(400, 400, 600, 600))
+        val disjointSides = listOf(
+            PaperStroke("left", PaperTool.PEN, listOf(point(.1f, .4f, 0f), point(.1f, .6f, 0f))),
+            PaperStroke("right", PaperTool.PEN, listOf(point(.9f, .4f, 0f), point(.9f, .6f, 0f))),
+        )
+        val surroundingPolyline = listOf(
+            PaperStroke(
+                "surround",
+                PaperTool.PEN,
+                listOf(
+                    point(.1f, .1f, 0f), point(.9f, .1f, 0f), point(.9f, .9f, 0f),
+                    point(.1f, .9f, 0f), point(.1f, .1f, 0f),
+                ),
+            ),
+        )
+
+        listOf("disjoint sides" to disjointSides, "surrounding polyline" to surroundingPolyline).forEach { (case, strokes) ->
+            val error = rasterizer.rasterize(strokes, safeGeometry).exceptionOrNull()
+            assertTrue(error is PageRasterizationError.EmptyPage, "$case returned $error")
+        }
+        assertEquals(0, encodes)
+        assertTrue(temporaryFolder.root.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
     fun `rasterized page crops to ink bounds plus padding and is grayscale`() = runTest {
         val rasterizer = PageRasterizer(
             cacheDirectory = temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             paddingPixels = 10,
         )
 
@@ -46,13 +110,15 @@ class PageRasterizerTest {
         page.use {
             assertEquals(540, it.width)
             assertEquals(240, it.height)
-            val bitmap = BitmapFactory.decodeFile(it.file.absolutePath)
+            val encoded = it.file.readBytes()
+            val bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.size)
             val pixels = IntArray(bitmap.width * bitmap.height)
             bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
             assertTrue(pixels.any { pixel -> pixel != Color.WHITE })
             assertTrue(pixels.all { pixel ->
                 Color.red(pixel) == Color.green(pixel) && Color.green(pixel) == Color.blue(pixel)
             })
+            bitmap.recycle()
         }
     }
 
@@ -60,13 +126,12 @@ class PageRasterizerTest {
     fun `rasterized page bounds the long side to 800 pixels`() = runTest {
         val rasterizer = PageRasterizer(
             cacheDirectory = temporaryFolder.root,
-            sourceWidth = 1_600,
-            sourceHeight = 1_200,
             paddingPixels = 0,
         )
 
         rasterizer.rasterize(
             listOf(stroke(point(0f, 0f, 0f), point(1f, 1f, 0f))),
+            PageGeometry.fullPage(1_600, 1_200),
         ).getOrThrow().use {
             assertEquals(800, maxOf(it.width, it.height))
             assertEquals(600, minOf(it.width, it.height))
@@ -75,7 +140,7 @@ class PageRasterizerTest {
 
     @Test
     fun `empty page is rejected without creating a cache file`() = runTest {
-        val rasterizer = PageRasterizer(temporaryFolder.root, sourceWidth = 1_000, sourceHeight = 1_000)
+        val rasterizer = PageRasterizer(temporaryFolder.root)
 
         val result = rasterizer.rasterize(emptyList())
 
@@ -85,7 +150,7 @@ class PageRasterizerTest {
 
     @Test
     fun `closing rasterized page deletes its temporary cache file`() = runTest {
-        val rasterizer = PageRasterizer(temporaryFolder.root, sourceWidth = 1_000, sourceHeight = 1_000)
+        val rasterizer = PageRasterizer(temporaryFolder.root)
         val page = rasterizer.rasterize(listOf(stroke(point(.5f, .5f, .02f)))).getOrThrow()
         assertTrue(page.file.exists())
 
@@ -98,8 +163,6 @@ class PageRasterizerTest {
     fun `closing rasterized page surfaces typed immediate deletion failure`() = runTest {
         val rasterizer = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             fileDeletion = PageCacheFileDeletion { false },
         )
         val page = rasterizer.rasterize(listOf(stroke(point(.5f, .5f, .02f)))).getOrThrow()
@@ -115,8 +178,6 @@ class PageRasterizerTest {
     fun `encoding failure surfaces cleanup failure when partial cache file cannot be deleted`() = runTest {
         val rasterizer = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             fileDeletion = PageCacheFileDeletion { false },
             imageEncoder = PageImageEncoder { _, _ -> error("encoding failed") },
         )
@@ -134,8 +195,6 @@ class PageRasterizerTest {
         val unrelated = temporaryFolder.newFile("other-cache.png").apply { setLastModified(0L) }
         val rasterizer = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             nowMillis = { 7_200_000L },
             staleAfterMillis = 3_600_000L,
         )
@@ -150,14 +209,10 @@ class PageRasterizerTest {
     fun `rasterizers sharing a cache directory preserve active page until one-shot close unregisters it`() = runTest {
         val owner = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             fileDeletion = PageCacheFileDeletion { false },
         )
         val sweeper = PageRasterizer(
             temporaryFolder.root.canonicalFile,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             nowMillis = { 7_200_000L },
             staleAfterMillis = 3_600_000L,
         )
@@ -182,8 +237,6 @@ class PageRasterizerTest {
         val sweepStarted = CountDownLatch(1)
         val owner = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             imageEncoder = PageImageEncoder { _, file ->
                 file.setLastModified(0L)
                 encodingStarted.countDown()
@@ -192,8 +245,6 @@ class PageRasterizerTest {
         )
         val sweeper = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             nowMillis = {
                 sweepStarted.countDown()
                 7_200_000L
@@ -219,8 +270,6 @@ class PageRasterizerTest {
     fun `cancellation during encoding deletes the partial cache file`() = runTest {
         val rasterizer = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             imageEncoder = PageImageEncoder { _, _ -> throw kotlinx.coroutines.CancellationException("cancel") },
         )
 
@@ -235,8 +284,6 @@ class PageRasterizerTest {
         lateinit var operation: Deferred<Result<RasterizedPage>>
         val rasterizer = PageRasterizer(
             temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
             dispatcher = StandardTestDispatcher(testScheduler),
             imageEncoder = PageImageEncoder { bitmap, file ->
                 FileOutputStream(file).use { output ->
@@ -257,4 +304,7 @@ class PageRasterizerTest {
     private fun stroke(vararg points: NormalizedPoint) = PaperStroke("stroke", PaperTool.PEN, points.toList())
 
     private fun point(x: Float, y: Float, radius: Float) = NormalizedPoint(x, y, radius)
+
+    private suspend fun PageRasterizer.rasterize(strokes: List<PaperStroke>) =
+        rasterize(strokes, PageGeometry.fullPage(1_000, 1_000))
 }

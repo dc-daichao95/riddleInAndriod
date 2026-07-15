@@ -329,9 +329,10 @@ class InputDissolveTest {
         persistence = persistence,
         preferences = DissolvePreferences(),
         turnInputRouter = TurnInputRouter(
-            PageRasterizer(File("build/tmp/dissolve"), 1_000, 1_000, dispatcher = dispatcher),
+            PageRasterizer(File("build/tmp/dissolve"), dispatcher = dispatcher),
             recognizer,
         ),
+        pageGeometry = AtomicPageGeometryPort(dev.riddle.magicpaper.paper.PageGeometry.fullPage(1_000, 1_000)),
         stateMachine = ConversationStateMachine(),
         orchestratorFactory = ::ConversationOrchestrator,
         savedStateHandle = savedStateHandle,

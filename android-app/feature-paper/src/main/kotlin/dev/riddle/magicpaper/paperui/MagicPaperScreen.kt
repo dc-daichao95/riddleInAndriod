@@ -38,6 +38,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -46,11 +48,16 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.riddle.magicpaper.paper.MagicPaperView
+import dev.riddle.magicpaper.paper.PageGeometry
+import dev.riddle.magicpaper.paper.SafePageBounds
 import dev.riddle.magicpaper.model.SettingsEntryMode
 import kotlinx.coroutines.flow.Flow
+import java.util.concurrent.atomic.AtomicLong
 
 @Composable
 fun MagicPaperRoute(
@@ -80,11 +87,29 @@ fun MagicPaperScreen(
     val motionScales = remember(effectiveMotionScaleSource) { effectiveMotionScaleSource.scales() }
     val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 1f)
     val effectiveRuneMotionPolicy = runeMotionPolicy ?: RuneMotionPolicy(durationScale)
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val safeLeft = contentInsets.getLeft(density, layoutDirection)
+    val safeTop = contentInsets.getTop(density)
+    val safeRight = contentInsets.getRight(density, layoutDirection)
+    val safeBottom = contentInsets.getBottom(density)
+    var pageSize by remember { mutableStateOf(IntSize.Zero) }
+    val geometryPublisherId = remember { nextGeometryPublisherId.incrementAndGet() }
     LaunchedEffect(motionScales, onIntent) {
         forwardObservedMotionScales(motionScales, onIntent)
     }
+    LaunchedEffect(pageSize, safeLeft, safeTop, safeRight, safeBottom, onIntent) {
+        if (pageSize.width > 0 && pageSize.height > 0) {
+            onIntent(
+                PaperUiIntent.SetPageGeometry(
+                    pageGeometry(pageSize, safeLeft, safeTop, safeRight, safeBottom),
+                    geometryPublisherId,
+                ),
+            )
+        }
+    }
     Box(
-        modifier.fillMaxSize().background(Color(0xFFF4F0E5)),
+        modifier.fillMaxSize().onSizeChanged { pageSize = it }.background(Color(0xFFF4F0E5)),
     ) {
         val paperLabel = stringResource(R.string.paper_surface_label)
         AndroidView(
@@ -164,6 +189,23 @@ fun MagicPaperScreen(
             }
         }
     }
+}
+
+private val nextGeometryPublisherId = AtomicLong()
+
+internal fun pageGeometry(
+    size: IntSize,
+    leftInset: Int,
+    topInset: Int,
+    rightInset: Int,
+    bottomInset: Int,
+): PageGeometry {
+    require(size.width > 0 && size.height > 0)
+    val left = leftInset.coerceIn(0, size.width - 1)
+    val top = topInset.coerceIn(0, size.height - 1)
+    val right = (size.width - rightInset).coerceIn(left + 1, size.width)
+    val bottom = (size.height - bottomInset).coerceIn(top + 1, size.height)
+    return PageGeometry(size.width, size.height, SafePageBounds(left, top, right, bottom))
 }
 
 internal suspend fun forwardObservedMotionScales(

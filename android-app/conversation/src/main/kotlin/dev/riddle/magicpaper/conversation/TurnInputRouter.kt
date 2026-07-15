@@ -4,6 +4,7 @@ import dev.riddle.magicpaper.model.ModelCapabilities
 import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.paper.PageRasterizationError
 import dev.riddle.magicpaper.paper.PageRasterizer
+import dev.riddle.magicpaper.paper.PageGeometry
 import dev.riddle.magicpaper.paper.RasterizedPage
 import kotlinx.coroutines.CancellationException
 import java.util.Locale
@@ -29,10 +30,11 @@ class TurnInputRouter(
     suspend fun route(
         capabilities: ModelCapabilities,
         strokes: List<PaperStroke>,
+        geometry: PageGeometry,
         onRecognitionStatus: (HandwritingRecognitionStatus) -> Unit = {},
     ): Result<TurnInput> {
         if (capabilities.vision) {
-            return rasterizer.rasterize(strokes).fold(
+            return rasterizer.rasterize(strokes, geometry).fold(
                 onSuccess = { Result.success(TurnInput.PageImage(it)) },
                 onFailure = { Result.failure(InputRoutingError.RasterizationFailed(it as PageRasterizationError)) },
             )

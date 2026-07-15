@@ -5,17 +5,20 @@ import dev.riddle.magicpaper.model.NormalizedPoint
 import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import dev.riddle.magicpaper.paper.PageRasterizer
+import dev.riddle.magicpaper.paper.PageGeometry
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 import java.util.Locale
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class InputRoutingTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
@@ -25,7 +28,7 @@ class InputRoutingTest {
         val recognizer = FakeRecognizer()
         val router = router(recognizer)
 
-        val input = router.route(ModelCapabilities(vision = true), page).getOrThrow()
+        val input = router.route(ModelCapabilities(vision = true), page, geometry).getOrThrow()
 
         input as TurnInput.PageImage
         input.image.use { assertEquals(0, recognizer.calls) }
@@ -36,7 +39,7 @@ class InputRoutingTest {
         val recognizer = FakeRecognizer().apply { result = Result.success("hello") }
         val router = router(recognizer)
 
-        val input = router.route(ModelCapabilities(vision = false), page).getOrThrow()
+        val input = router.route(ModelCapabilities(vision = false), page, geometry).getOrThrow()
 
         assertEquals(TurnInput.RecognizedText("hello"), input)
         assertEquals(Locale.JAPAN, recognizer.locale)
@@ -46,7 +49,7 @@ class InputRoutingTest {
     fun `recognized text is trimmed before staging`() = runTest {
         val recognizer = FakeRecognizer().apply { result = Result.success("  hello  ") }
 
-        val input = router(recognizer).route(ModelCapabilities(vision = false), page).getOrThrow()
+        val input = router(recognizer).route(ModelCapabilities(vision = false), page, geometry).getOrThrow()
 
         assertEquals(TurnInput.RecognizedText("hello"), input)
     }
@@ -55,7 +58,7 @@ class InputRoutingTest {
     fun `blank OCR prevents Provider request`() = runTest {
         val recognizer = FakeRecognizer().apply { result = Result.success("   ") }
 
-        val result = router(recognizer).route(ModelCapabilities(vision = false), page)
+        val result = router(recognizer).route(ModelCapabilities(vision = false), page, geometry)
 
         assertEquals(InputRoutingError.BlankRecognition, result.exceptionOrNull())
     }
@@ -65,7 +68,7 @@ class InputRoutingTest {
         val missingModel = HandwritingRecognitionError.ModelNotDownloaded("ja-JP")
         val recognizer = FakeRecognizer().apply { result = Result.failure(missingModel) }
 
-        val error = router(recognizer).route(ModelCapabilities(vision = false), page).exceptionOrNull()
+        val error = router(recognizer).route(ModelCapabilities(vision = false), page, geometry).exceptionOrNull()
 
         assertEquals(InputRoutingError.RecognitionFailed(missingModel), error)
     }
@@ -73,8 +76,6 @@ class InputRoutingTest {
     private fun router(recognizer: HandwritingRecognizer) = TurnInputRouter(
         rasterizer = PageRasterizer(
             cacheDirectory = temporaryFolder.root,
-            sourceWidth = 1_000,
-            sourceHeight = 1_000,
         ),
         recognizer = recognizer,
         localeProvider = { Locale.JAPAN },
@@ -99,4 +100,5 @@ class InputRoutingTest {
             points = listOf(NormalizedPoint(.2f, .3f, .01f), NormalizedPoint(.8f, .7f, .01f)),
         ),
     )
+    private val geometry = PageGeometry.fullPage(1_000, 1_000)
 }

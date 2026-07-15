@@ -183,11 +183,12 @@ class PaperViewModelTest {
         persistence = persistence,
         preferences = preferences,
         turnInputRouter = TurnInputRouter(
-            PageRasterizer(File("build/tmp/view-model"), 1000, 1000, dispatcher = dispatcher),
+            PageRasterizer(File("build/tmp/view-model"), dispatcher = dispatcher),
             object : HandwritingRecognizer {
                 override suspend fun recognize(strokes: List<PaperStroke>, locale: Locale) = Result.success("recognized page")
             },
         ),
+        pageGeometry = AtomicPageGeometryPort(dev.riddle.magicpaper.paper.PageGeometry.fullPage(1_000, 1_000)),
         stateMachine = ConversationStateMachine(),
         orchestratorFactory = ::ConversationOrchestrator,
         savedStateHandle = SavedStateHandle(),

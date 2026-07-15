@@ -8,6 +8,7 @@ import dev.riddle.magicpaper.conversation.*
 import dev.riddle.magicpaper.model.*
 import dev.riddle.magicpaper.paper.PaperIntent
 import dev.riddle.magicpaper.paper.PaperRenderModel
+import dev.riddle.magicpaper.paper.PageGeometry
 import dev.riddle.magicpaper.paper.RasterizedPage
 import dev.riddle.magicpaper.model.SettingsEntryMode
 import java.io.FileInputStream
@@ -50,6 +51,7 @@ sealed interface PaperUiIntent {
     data class SetPortraitLocked(val locked: Boolean) : PaperUiIntent
     data class SetSettingsEntryMode(val mode: SettingsEntryMode) : PaperUiIntent
     data class SetMotionScale(val scale: Float) : PaperUiIntent
+    data class SetPageGeometry(val geometry: PageGeometry, val publisherId: Long = 0L) : PaperUiIntent
 }
 
 sealed interface PaperEffect { data object OpenSettings : PaperEffect }
@@ -78,12 +80,15 @@ class PaperViewModel(
     private val persistence: PaperPersistence,
     private val preferences: PaperPreferences,
     private val turnInputRouter: TurnInputRouter,
+    private val pageGeometry: PageGeometryPort,
     private val stateMachine: ConversationStateMachine,
     private val orchestratorFactory: (ModelProvider) -> ConversationOrchestrator,
     private val savedStateHandle: SavedStateHandle,
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val questionMarkClassifier: QuestionMarkClassifier = QuestionMarkClassifier(),
     private val beforeSubmittedInkOwnership: suspend () -> Unit = {},
+    private val beforeSubmittedInkInstall: suspend () -> Unit = {},
+    private val afterMissingGeometryBeforeTurnRelease: suspend () -> Unit = {},
     private val beforePreparingStatePublished: suspend () -> Unit = {},
     private val afterInactivityDeadlineBeforeJobOwnership: suspend () -> Unit = {},
     private val clock: AppClock = object : AppClock {
@@ -108,6 +113,7 @@ class PaperViewModel(
     private val activeTurnJob = AtomicReference<Job?>()
     private val settingsOpen = AtomicBoolean(false)
     private val motionScale = AtomicReference(1f)
+    private val latestGeometryPublisherId = AtomicLong(Long.MIN_VALUE)
 
     init {
         val recoveryBaselineRevision = draftRevision.get()
@@ -185,6 +191,18 @@ class PaperViewModel(
                 preferences.setSettingsEntryMode(intent.mode)
             }
             is PaperUiIntent.SetMotionScale -> motionScale.set(intent.scale.coerceAtLeast(0f))
+            is PaperUiIntent.SetPageGeometry -> {
+                val needsScheduling = synchronized(turnOwnershipLock) {
+                    if (intent.publisherId < latestGeometryPublisherId.get()) {
+                        false
+                    } else {
+                        latestGeometryPublisherId.set(intent.publisherId)
+                        pageGeometry.update(intent.geometry)
+                        activeTurnJob.get() == null && inactivityJob.get() == null
+                    }
+                }
+                if (needsScheduling) scheduleCommitIfNeeded()
+            }
         }
     }
 
@@ -221,6 +239,7 @@ class PaperViewModel(
         val deadline = clock.deadlineAfter(INACTIVITY_MILLIS)
         lateinit var job: Job
         job = viewModelScope.launch(workerDispatcher, start = CoroutineStart.LAZY) {
+            var retryForMissingGeometry = false
             try {
                 deadline.await()
                 afterInactivityDeadlineBeforeJobOwnership()
@@ -236,17 +255,24 @@ class PaperViewModel(
                         false
                     }
                 }
-                if (activated) runTurn(generation, job)
+                if (activated) runTurn(generation, job) { retryForMissingGeometry = true }
             } finally {
-                inactivityJob.compareAndSet(job, null)
-                activeTurnJob.compareAndSet(job, null)
+                val shouldRetryMissingGeometry = synchronized(turnOwnershipLock) {
+                    inactivityJob.compareAndSet(job, null)
+                    val releasedActiveTurn = activeTurnJob.compareAndSet(job, null)
+                    retryForMissingGeometry && releasedActiveTurn &&
+                        generation == turnGeneration.get() && !settingsOpen.get() &&
+                        pageGeometry.snapshot() != null && submittedInk.get() == null &&
+                        mutableState.value.renderModel.strokes.isNotEmpty()
+                }
+                if (shouldRetryMissingGeometry) scheduleCommitIfNeeded()
             }
         }
         inactivityJob.getAndSet(job)?.cancel()
         job.start()
     }
 
-    private suspend fun runTurn(generation: Long, ownerJob: Job) {
+    private suspend fun runTurn(generation: Long, ownerJob: Job, markMissingGeometry: () -> Unit) {
         val strokes = mutableState.value.renderModel.strokes
         val runDraftRevision = draftRevision.get()
         if (strokes.isEmpty() || settingsOpen.get() || generation != turnGeneration.get()) return
@@ -272,19 +298,32 @@ class PaperViewModel(
             conversationState = commit.state
             check(conversationState is ConversationState.Drinking)
             beforeSubmittedInkOwnership()
-            val candidate = SubmittedInk(generation, strokes)
+            beforeSubmittedInkInstall()
+            var candidate: SubmittedInk? = null
+            var geometryMissing = false
             val ownershipAcquired = synchronized(turnOwnershipLock) {
                 if (!ownerJob.isActive || activeTurnJob.get() !== ownerJob ||
                     generation != turnGeneration.get() || settingsOpen.get() || submittedInk.get() != null
                 ) false
                 else {
-                    submittedInk.set(candidate)
+                    val geometry = pageGeometry.snapshot() ?: run {
+                        geometryMissing = true
+                        markMissingGeometry()
+                        return@synchronized false
+                    }
+                    val acquired = SubmittedInk(generation, strokes, geometry)
+                    submittedInk.set(acquired)
+                    candidate = acquired
                     true
                 }
             }
-            if (!ownershipAcquired) return
-            submission = candidate
-            if (!publishPreparingOwnership(generation, ownerJob, candidate)) return
+            if (!ownershipAcquired) {
+                if (geometryMissing) afterMissingGeometryBeforeTurnRelease()
+                return
+            }
+            val ownedSubmission = checkNotNull(candidate)
+            submission = ownedSubmission
+            if (!publishPreparingOwnership(generation, ownerJob, ownedSubmission)) return
             awaitDraftWrite(runDraftRevision)
             val markerPersisted = persistenceMutex.withLock {
                 if (!isCurrentRun(generation, runDraftRevision)) return@withLock false
@@ -304,11 +343,11 @@ class PaperViewModel(
                 }
             }
             if (!markerPersisted) return
-            if (!runInputDissolve(generation, ownerJob, candidate)) return
+            if (!runInputDissolve(generation, ownerJob, ownedSubmission)) return
 
             val selected = modelSelection.selected()
             check(selected.capabilities.streaming) { "Selected model does not support streaming" }
-            val routed = turnInputRouter.route(selected.capabilities, strokes) { status ->
+            val routed = turnInputRouter.route(selected.capabilities, strokes, ownedSubmission.geometry) { status ->
                 if (generation == turnGeneration.get()) {
                     mutableState.update {
                         it.copy(
@@ -397,7 +436,6 @@ class PaperViewModel(
                 synchronized(turnOwnershipLock) { submittedInk.compareAndSet(owned, null) }
             }
             pageImage?.close()
-            activeTurnJob.compareAndSet(currentCoroutineContext()[Job], null)
         }
     }
 
@@ -610,7 +648,11 @@ class PaperViewModel(
 
     private data class MutableStroke(val id: String, val tool: PaperTool, val points: MutableList<NormalizedPoint>)
     private data class DraftWrite(val revision: Long, val ack: CompletableDeferred<Result<Unit>>)
-    private data class SubmittedInk(val generation: Long, val strokes: List<PaperStroke>)
+    private data class SubmittedInk(
+        val generation: Long,
+        val strokes: List<PaperStroke>,
+        val geometry: PageGeometry,
+    )
     private enum class PreparingPublication { STALE, PUBLISHED, RETRY }
     private class ProviderStreamFailure(val error: ModelError) : Exception("Provider stream failed")
 

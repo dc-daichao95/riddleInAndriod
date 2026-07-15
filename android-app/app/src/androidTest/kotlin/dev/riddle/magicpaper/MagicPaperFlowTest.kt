@@ -3,11 +3,14 @@ package dev.riddle.magicpaper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.RectF
+import android.os.ParcelFileDescriptor
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.util.Base64
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -20,13 +23,17 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.lifecycleScope
+import androidx.test.platform.app.InstrumentationRegistry
 import dev.riddle.magicpaper.paper.MagicPaperView
+import dev.riddle.magicpaper.paper.PaperIntent
+import dev.riddle.magicpaper.conversation.FakeModelProvider
 import dev.riddle.magicpaper.paperui.PaperPhase
 import dev.riddle.magicpaper.paperui.PaperUiIntent
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Assert.assertEquals
@@ -37,8 +44,12 @@ import org.junit.Test
 
 class MagicPaperFlowTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    private var initialAccelerometerRotation: String = "1"
+    private var initialUserRotation: String = "0"
 
     @Before fun unlockPortraitPreference() {
+        initialAccelerometerRotation = executeShellCommandAndWait("settings get system accelerometer_rotation").trim()
+        initialUserRotation = executeShellCommandAndWait("settings get system user_rotation").trim()
         compose.activity.paperViewModel.onIntent(PaperUiIntent.SetPortraitLocked(false))
         compose.waitUntil(2_000) {
             !compose.activity.paperViewModel.state.value.portraitLocked &&
@@ -51,6 +62,7 @@ class MagicPaperFlowTest {
         compose.waitUntil(2_000) {
             compose.activity.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
+        restoreDeviceRotation()
     }
 
     @Test fun touch_input_dissolves_thinks_streams_completes_rotates_and_recreates() {
@@ -119,6 +131,130 @@ class MagicPaperFlowTest {
             SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite),
         )
         compose.onNodeWithTag("paper_status").assertIsDisplayed().assertTextEquals("Paper ready")
+    }
+
+    @Test fun page_raster_geometry_tracks_the_current_window_instead_of_application_construction() {
+        val container = (compose.activity.application as RiddleApplication).container
+        runBlocking { container.profileRepository.select(null) }
+        val fakeProvider = container.fakeProvider
+        compose.activity.paperViewModel.onIntent(PaperUiIntent.Cancel)
+        compose.waitUntil(2_000) { !compose.activity.paperViewModel.state.value.canCancel }
+        runBlocking { container.memoryRepository.clearDraft() }
+        compose.activity.getSharedPreferences("paper-session-v1", android.content.Context.MODE_PRIVATE)
+            .edit().clear().commit()
+        compose.activity.paperViewModel.state.value.renderModel.strokes.forEach { stroke ->
+            stroke.points.firstOrNull()?.let { point ->
+                compose.activity.paperViewModel.onPaperIntent(PaperIntent.Erase(point))
+            }
+        }
+        compose.waitUntil(2_000) { compose.activity.paperViewModel.state.value.renderModel.strokes.isEmpty() }
+        fakeProvider.clearRecordedRequests()
+        setDeviceRotation(0)
+        compose.waitUntil(5_000) {
+            compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        }
+        setDeviceRotation(1)
+        compose.waitUntil(5_000) {
+            compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        }
+
+        var paper = requireNotNull(findPaper(compose.activity.window.decorView))
+        compose.waitUntil(2_000) {
+            val geometry = container.pageGeometry.snapshot() ?: return@waitUntil false
+            geometry.pageWidthPx == paper.width && geometry.pageHeightPx == paper.height
+        }
+        val landscapeGeometry = checkNotNull(container.pageGeometry.snapshot())
+        assertEquals(paper.width, landscapeGeometry.pageWidthPx)
+        assertEquals(paper.height, landscapeGeometry.pageHeightPx)
+        assertEquals("a cleared page must not submit while rotating", 0, fakeProvider.recordedRequests.size)
+        drawAcrossSafeBounds(paper, landscapeGeometry)
+        compose.waitUntil(12_000) { fakeProvider.recordedRequests.size == 1 }
+        val geometryAtProviderRequest = checkNotNull(container.pageGeometry.snapshot())
+        val landscapeImage = decodeProviderImage(fakeProvider.recordedRequests.single().messages.single().imageDataUrl)
+        assertTrue(
+            "landscape PNG ${landscapeImage.width}x${landscapeImage.height}, " +
+                "claimed=$landscapeGeometry, final=$geometryAtProviderRequest",
+            landscapeImage.width > landscapeImage.height,
+        )
+        assertAspectMatchesSafeBounds(landscapeImage, landscapeGeometry)
+        landscapeImage.recycle()
+
+        val retained = compose.activity.paperViewModel
+        setDeviceRotation(0)
+        compose.waitUntil(5_000) {
+            compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+        }
+        compose.activityRule.scenario.recreate()
+        compose.waitForIdle()
+        assertSame(retained, compose.activity.paperViewModel)
+        paper = requireNotNull(findPaper(compose.activity.window.decorView))
+        compose.waitUntil(2_000) {
+            val geometry = container.pageGeometry.snapshot() ?: return@waitUntil false
+            geometry.pageWidthPx == paper.width && geometry.pageHeightPx == paper.height
+        }
+        val portraitGeometry = checkNotNull(container.pageGeometry.snapshot())
+        drawAcrossSafeBounds(paper, portraitGeometry)
+        compose.waitUntil(12_000) { fakeProvider.recordedRequests.size == 2 }
+        val portraitImage = decodeProviderImage(fakeProvider.recordedRequests.last().messages.single().imageDataUrl)
+        assertTrue(
+            "portrait PNG ${portraitImage.width}x${portraitImage.height}, safe=${portraitGeometry.safeBounds}",
+            portraitImage.height > portraitImage.width,
+        )
+        assertAspectMatchesSafeBounds(portraitImage, portraitGeometry)
+        portraitImage.recycle()
+    }
+
+    private fun drawAcrossSafeBounds(
+        paper: MagicPaperView,
+        geometry: dev.riddle.magicpaper.paper.PageGeometry,
+    ) {
+        val bounds = geometry.safeBounds
+        val inset = 8f
+        drawStrokeThroughView(
+            (bounds.left + inset) / paper.width,
+            (bounds.top + inset) / paper.height,
+            (bounds.right - inset) / paper.width,
+            (bounds.bottom - inset) / paper.height,
+        )
+    }
+
+    private fun setDeviceRotation(rotation: Int) {
+        executeShellCommandAndWait("settings put system accelerometer_rotation 0")
+        executeShellCommandAndWait("settings put system user_rotation $rotation")
+    }
+
+    private fun restoreDeviceRotation() {
+        restoreSystemSetting("user_rotation", initialUserRotation)
+        restoreSystemSetting("accelerometer_rotation", initialAccelerometerRotation)
+    }
+
+    private fun restoreSystemSetting(name: String, value: String) {
+        if (value == "null") executeShellCommandAndWait("settings delete system $name")
+        else executeShellCommandAndWait("settings put system $name $value")
+    }
+
+    private fun executeShellCommandAndWait(command: String): String {
+        val descriptor = InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+            input.readBytes().toString(Charsets.UTF_8)
+        }
+    }
+
+    private fun decodeProviderImage(dataUrl: String?): Bitmap {
+        requireNotNull(dataUrl)
+        val encoded = dataUrl.substringAfter("base64,", missingDelimiterValue = "")
+        check(encoded.isNotEmpty())
+        val bytes = Base64.decode(encoded, Base64.DEFAULT)
+        return checkNotNull(BitmapFactory.decodeByteArray(bytes, 0, bytes.size))
+    }
+
+    private fun assertAspectMatchesSafeBounds(
+        bitmap: Bitmap,
+        geometry: dev.riddle.magicpaper.paper.PageGeometry,
+    ) {
+        val expected = geometry.safeBounds.width.toFloat() / geometry.safeBounds.height
+        val actual = bitmap.width.toFloat() / bitmap.height
+        assertEquals(expected, actual, .12f)
     }
 
     private fun drawStrokeThroughView(fromX: Float, fromY: Float, toX: Float, toY: Float) {

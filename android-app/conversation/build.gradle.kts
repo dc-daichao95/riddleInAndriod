@@ -9,6 +9,7 @@ android {
         version = release(36) { minorApiLevel = 1 }
     }
     defaultConfig { minSdk = 33 }
+    testOptions { unitTests.isIncludeAndroidResources = true }
 }
 
 dependencies {

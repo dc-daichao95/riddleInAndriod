@@ -30,6 +30,7 @@ import dev.riddle.magicpaper.paperui.PaperViewModel
 import dev.riddle.magicpaper.paperui.ModelSelection
 import dev.riddle.magicpaper.paperui.SelectedModel
 import dev.riddle.magicpaper.paper.PageRasterizer
+import dev.riddle.magicpaper.paperui.AtomicPageGeometryPort
 import dev.riddle.magicpaper.model.SettingsEntryMode
 import dev.riddle.magicpaper.provider.DeepSeekProvider
 import dev.riddle.magicpaper.provider.OkHttpModelTransport
@@ -98,7 +99,7 @@ class AppContainer(context: Context) {
             ProviderType.DEEPSEEK_COMPATIBLE -> DeepSeekProvider(configuration, transport)
         }
     }
-    private val fakeProvider: ModelProvider = FakeModelProvider(flow {
+    internal val fakeProvider = FakeModelProvider(flow {
         delay(500)
         emit(ModelEvent.TextDelta("The paper remembers."))
         delay(500)
@@ -120,10 +121,9 @@ class AppContainer(context: Context) {
     private val stateMachine = ConversationStateMachine()
     private val pageRasterizer = PageRasterizer(
         appContext.cacheDir,
-        appContext.resources.displayMetrics.widthPixels.coerceAtLeast(1),
-        appContext.resources.displayMetrics.heightPixels.coerceAtLeast(1),
         dispatcher = dispatchers.default,
     )
+    val pageGeometry = AtomicPageGeometryPort()
     private val turnInputRouter = TurnInputRouter(
         pageRasterizer,
         MlKitHandwritingRecognizer(applicationScope = applicationScope, dispatcher = dispatchers.default),
@@ -161,6 +161,7 @@ class AppContainer(context: Context) {
         savedStateHandle = savedStateHandle,
         workerDispatcher = dispatchers.default,
         clock = clock,
+        pageGeometry = pageGeometry,
     )
 }
 

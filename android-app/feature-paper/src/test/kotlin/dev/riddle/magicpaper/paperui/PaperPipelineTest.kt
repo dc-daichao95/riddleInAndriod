@@ -13,8 +13,11 @@ import dev.riddle.magicpaper.conversation.HandwritingRecognitionStatus
 import dev.riddle.magicpaper.conversation.TurnInputRouter
 import dev.riddle.magicpaper.model.*
 import dev.riddle.magicpaper.paper.PageRasterizer
+import dev.riddle.magicpaper.paper.PageGeometry
+import dev.riddle.magicpaper.paper.PageImageEncoder
 import dev.riddle.magicpaper.paper.PaperIntent
 import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,10 +34,12 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 import kotlin.test.*
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class PaperPipelineTest {
     private val dispatcher = StandardTestDispatcher()
     @Before fun before() = Dispatchers.setMain(dispatcher)
@@ -380,9 +385,10 @@ class PaperPipelineTest {
             persistence = PipelinePersistence(),
             preferences = PipelinePreferences(),
             turnInputRouter = TurnInputRouter(
-                PageRasterizer(directory, 1000, 1000, dispatcher = dispatcher),
+                PageRasterizer(directory, dispatcher = dispatcher),
                 RecordingRecognizer("unused"),
             ),
+            pageGeometry = AtomicPageGeometryPort(PageGeometry.fullPage(1_000, 1_000)),
             stateMachine = ConversationStateMachine(),
             orchestratorFactory = ::ConversationOrchestrator,
             savedStateHandle = SavedStateHandle(),
@@ -395,6 +401,181 @@ class PaperPipelineTest {
 
         assertTrue(provider.recordedRequests.single().messages.single().imageDataUrl?.startsWith("data:image/png;base64,") == true)
         assertTrue(directory.listFiles().orEmpty().none { it.name.startsWith("riddle-page-") })
+    }
+
+    @Test fun `geometry is captured when submitted ink gains turn ownership`() = runTest(dispatcher) {
+        val geometryPort = AtomicPageGeometryPort(PageGeometry.fullPage(100, 200))
+        val ownershipPublished = CompletableDeferred<Unit>()
+        val continueTurn = CompletableDeferred<Unit>()
+        val encodedSizes = mutableListOf<Pair<Int, Int>>()
+        val viewModel = geometryViewModel(
+            geometryPort,
+            encodedSizes,
+            beforePreparingStatePublished = {
+                ownershipPublished.complete(Unit)
+                continueTurn.await()
+            },
+        )
+        draw(viewModel)
+
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        dispatcher.scheduler.runCurrent()
+        ownershipPublished.await()
+        geometryPort.update(PageGeometry.fullPage(200, 100))
+        continueTurn.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(32 to 62), encodedSizes)
+    }
+
+    @Test fun `geometry update in the pre-ownership gap wins the committed snapshot`() = runTest(dispatcher) {
+        val geometryPort = AtomicPageGeometryPort(PageGeometry.fullPage(100, 200))
+        val beforeInstall = CompletableDeferred<Unit>()
+        val continueInstall = CompletableDeferred<Unit>()
+        val encodedSizes = mutableListOf<Pair<Int, Int>>()
+        val viewModel = geometryViewModel(
+            geometryPort = geometryPort,
+            encodedSizes = encodedSizes,
+            beforeSubmittedInkInstall = {
+                beforeInstall.complete(Unit)
+                continueInstall.await()
+            },
+        )
+        draw(viewModel)
+
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        dispatcher.scheduler.runCurrent()
+        beforeInstall.await()
+        viewModel.onIntent(PaperUiIntent.SetPageGeometry(PageGeometry.fullPage(200, 100)))
+        continueInstall.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(62 to 32), encodedSizes)
+    }
+
+    @Test fun `retained view model uses resized geometry for the next commit`() = runTest(dispatcher) {
+        val geometryPort = AtomicPageGeometryPort(PageGeometry.fullPage(100, 200))
+        val encodedSizes = mutableListOf<Pair<Int, Int>>()
+        val instance = geometryViewModel(geometryPort, encodedSizes)
+        val store = ViewModelStore()
+        val factory = object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                @Suppress("UNCHECKED_CAST")
+                return instance as T
+            }
+        }
+        val beforeRecreation = ViewModelProvider(store, factory)[PaperViewModel::class.java]
+        draw(beforeRecreation, "portrait")
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+
+        geometryPort.update(PageGeometry.fullPage(200, 100))
+        val afterRecreation = ViewModelProvider(store, factory)[PaperViewModel::class.java]
+        assertSame(beforeRecreation, afterRecreation)
+        draw(afterRecreation, "landscape")
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+
+        assertEquals(listOf(32 to 62, 62 to 32), encodedSizes)
+        store.clear()
+    }
+
+    @Test fun `unready geometry retains ink and first real layout schedules the turn`() = runTest(dispatcher) {
+        val geometryPort = AtomicPageGeometryPort()
+        val encodedSizes = mutableListOf<Pair<Int, Int>>()
+        val viewModel = geometryViewModel(geometryPort, encodedSizes)
+        draw(viewModel, "awaiting-layout")
+
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+        assertTrue(encodedSizes.isEmpty())
+        assertEquals(listOf("awaiting-layout"), viewModel.state.value.renderModel.strokes.map { it.id })
+
+        viewModel.onIntent(PaperUiIntent.SetPageGeometry(PageGeometry.fullPage(200, 100)))
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+
+        assertEquals(listOf(62 to 32), encodedSizes)
+    }
+
+    @Test fun `geometry arriving after missing snapshot but before turn release is rescheduled`() = runTest(dispatcher) {
+        val geometryPort = AtomicPageGeometryPort()
+        val encodedSizes = mutableListOf<Pair<Int, Int>>()
+        val missingGeometryObserved = CompletableDeferred<Unit>()
+        val releaseTurn = CompletableDeferred<Unit>()
+        val viewModel = geometryViewModel(
+            geometryPort = geometryPort,
+            encodedSizes = encodedSizes,
+            afterMissingGeometryBeforeTurnRelease = {
+                missingGeometryObserved.complete(Unit)
+                releaseTurn.await()
+            },
+        )
+        draw(viewModel, "handoff")
+
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        dispatcher.scheduler.runCurrent()
+        missingGeometryObserved.await()
+        viewModel.onIntent(PaperUiIntent.SetPageGeometry(PageGeometry.fullPage(200, 100)))
+        releaseTurn.complete(Unit)
+        dispatcher.scheduler.runCurrent()
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+
+        assertEquals(listOf(62 to 32), encodedSizes)
+    }
+
+    @Test fun `late geometry from a disposed screen cannot overwrite the newer publisher`() = runTest(dispatcher) {
+        val geometryPort = AtomicPageGeometryPort()
+        val encodedSizes = mutableListOf<Pair<Int, Int>>()
+        val viewModel = geometryViewModel(geometryPort, encodedSizes)
+        viewModel.onIntent(PaperUiIntent.SetPageGeometry(PageGeometry.fullPage(200, 100), publisherId = 2L))
+        viewModel.onIntent(PaperUiIntent.SetPageGeometry(PageGeometry.fullPage(100, 200), publisherId = 1L))
+        draw(viewModel, "new-screen")
+
+        advanceTimeBy(PaperViewModel.INACTIVITY_MILLIS)
+        advanceUntilIdle()
+
+        assertEquals(listOf(62 to 32), encodedSizes)
+    }
+
+    private fun geometryViewModel(
+        geometryPort: PageGeometryPort,
+        encodedSizes: MutableList<Pair<Int, Int>>,
+        beforePreparingStatePublished: suspend () -> Unit = {},
+        beforeSubmittedInkInstall: suspend () -> Unit = {},
+        afterMissingGeometryBeforeTurnRelease: suspend () -> Unit = {},
+    ): PaperViewModel {
+        val directory = File("build/tmp/geometry-${System.nanoTime()}").apply { mkdirs() }
+        val rasterizer = PageRasterizer(
+            cacheDirectory = directory,
+            paddingPixels = 0,
+            dispatcher = dispatcher,
+            imageEncoder = PageImageEncoder { bitmap, file ->
+                encodedSizes += bitmap.width to bitmap.height
+                FileOutputStream(file).use { output ->
+                    check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output))
+                }
+            },
+        )
+        val provider = FakeModelProvider(listOf(ModelEvent.Completed(FinishReason.STOP)))
+        return PaperViewModel(
+            modelSelection = ModelSelection {
+                SelectedModel(provider, "vision", ModelCapabilities(streaming = true, vision = true))
+            },
+            persistence = PipelinePersistence(),
+            preferences = PipelinePreferences(),
+            turnInputRouter = TurnInputRouter(rasterizer, RecordingRecognizer("unused")),
+            stateMachine = ConversationStateMachine(),
+            orchestratorFactory = ::ConversationOrchestrator,
+            savedStateHandle = SavedStateHandle(),
+            workerDispatcher = dispatcher,
+            clock = TestAppClock(dispatcher.scheduler),
+            beforePreparingStatePublished = beforePreparingStatePublished,
+            beforeSubmittedInkInstall = beforeSubmittedInkInstall,
+            afterMissingGeometryBeforeTurnRelease = afterMissingGeometryBeforeTurnRelease,
+            pageGeometry = geometryPort,
+        ).apply { onIntent(PaperUiIntent.SetMotionScale(0f)) }
     }
 
     private fun pipelineViewModel(
@@ -410,7 +591,8 @@ class PaperPipelineTest {
         modelSelection = ModelSelection { SelectedModel(provider, "configured", provider.descriptor.capabilities) },
         persistence = persistence,
         preferences = preferences,
-        turnInputRouter = TurnInputRouter(PageRasterizer(File("build/tmp/pipeline"), 1000, 1000, dispatcher = dispatcher), recognizer),
+        turnInputRouter = TurnInputRouter(PageRasterizer(File("build/tmp/pipeline"), dispatcher = dispatcher), recognizer),
+        pageGeometry = AtomicPageGeometryPort(PageGeometry.fullPage(1_000, 1_000)),
         stateMachine = ConversationStateMachine(),
         orchestratorFactory = ::ConversationOrchestrator,
         savedStateHandle = savedStateHandle,
