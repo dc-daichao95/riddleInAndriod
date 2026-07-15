@@ -9,7 +9,7 @@
 - 仓库：<REPO_ROOT>
 - 工作树：<WORKTREE>
 - 分支：codex/android-magic-paper
-- 期望起点：09fda56a563d57c542183aac6d21aa56ff8ca862
+- 最低实现基线：09fda56a563d57c542183aac6d21aa56ff8ca862；当前 tip 应同时包含主题为 docs(android): add migration development handoff 的交接文档提交，允许是其后代
 
 第一步只做核验，不改代码：
 1. 完整阅读 <REPO_ROOT>/AGENTS.md 以及任何嵌套 AGENTS.md。
@@ -21,8 +21,8 @@
    - doc/specs/magic-paper-ux-provider-text-pipeline.md
    - doc/specs/magic-paper-controls-language-repair.md
    - doc/plans/android-completion-master-plan.md
-3. 运行 git branch --show-current、git rev-parse HEAD、git status --short、git log -12 --oneline。
-4. 如果 HEAD 或工作树状态与迁移基线不同，先报告差异并判断它是迁移结果还是新用户改动；禁止 reset --hard、checkout --、clean 或改写历史。
+3. 运行 git branch --show-current、git rev-parse HEAD、git merge-base --is-ancestor 09fda56 HEAD、git status --short、git log -12 --oneline。
+4. 如果最低实现基线不是当前 tip 的祖先、交接文档提交缺失，或工作树状态与迁移基线不同，先报告差异并判断它是迁移结果还是新用户改动；禁止 reset --hard、checkout --、clean 或改写历史。
 
 始终保护以下既有用户改动，不覆盖、不暂存、不提交：
 - .superpowers/sdd/task-3-report.md

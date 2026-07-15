@@ -13,16 +13,18 @@
 | 仓库 | `riddleInAndriod` |
 | 当前工作树 | `.worktrees/codex-android-magic-paper` |
 | 分支 | `codex/android-magic-paper` |
-| 基线提交 | `09fda56a563d57c542183aac6d21aa56ff8ca862` |
-| 基线主题 | `fix(android): preserve handwriting and reply language` |
+| 最低实现基线 | `09fda56a563d57c542183aac6d21aa56ff8ca862` |
+| 实现基线主题 | `fix(android): preserve handwriting and reply language` |
+| 交接文档 | 位于最低实现基线之后的 `docs(android): add migration development handoff` 提交；迁移后以实际分支 tip 为准 |
 | 主分支快照 | `main` @ `e28c7ce735551b9af91aea613b16fd4153be3d0c` |
 | 子模块 | 项目未依赖已知 Git 子模块；本机 Git for Windows 的 `git submodule status` 因缺少 Unix helper 未能再次确认 |
 
-迁移后必须从精确提交开始核验：
+迁移后必须确认当前 tip 包含最低实现基线和交接文档提交；tip 可以是它们的后代：
 
 ```powershell
 git checkout codex/android-magic-paper
 git rev-parse HEAD
+git merge-base --is-ancestor 09fda56 HEAD
 git status --short
 git log -12 --oneline
 ```
