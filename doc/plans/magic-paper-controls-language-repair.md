@@ -1,5 +1,7 @@
 # Magic Paper Controls and Language Repair Implementation Plan
 
+> **Historical child plan:** Approved requirements remain authoritative, while execution order, completed dependencies, progress, device verification, branding, and Release handoff are consolidated in `doc/plans/android-completion-master-plan.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox syntax for tracking.
 
 **Goal:** Repair provider setup/null parsing, preserve Chinese handwriting/response language, and complete immersive send/tool/dissolve/reply playback behavior.

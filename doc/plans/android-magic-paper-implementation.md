@@ -1,5 +1,7 @@
 # Android Magic Paper App Implementation Plan
 
+> **Historical plan:** Baseline Tasks 1–8 and original integration slices are retained for design and RED/GREEN evidence. All remaining execution and progress tracking is consolidated in `doc/plans/android-completion-master-plan.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build one full-feature Android 13 through Android 16 application that preserves Riddle's full-screen enchanted-paper handwriting experience, supports responsive phone/foldable/tablet layouts, and streams replies from OpenAI-compatible and DeepSeek-compatible model services.

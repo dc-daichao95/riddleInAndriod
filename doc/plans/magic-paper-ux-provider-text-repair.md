@@ -1,5 +1,7 @@
 # Magic Paper UX, Provider Setup, and Text Pipeline Repair Plan
 
+> **Historical plan:** Completed R0–R5b foundations and original acceptance evidence remain here. Unfinished repair and release work is governed by `doc/plans/android-completion-master-plan.md`.
+
 > Required execution method: `superpowers:subagent-driven-development`. Each slice follows Red → Green → Refactor → Verify → Review and receives its own scoped commit.
 
 **Goal:** Replace the conflicting settings gesture, make Provider setup validation-first, and implement the real text-model magic-paper pipeline without vendor branching, lost text, or reduced Android 13 behavior.
