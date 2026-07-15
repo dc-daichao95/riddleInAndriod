@@ -46,6 +46,7 @@ class PaperClockTest {
         val clock = FakeDeviceClock(elapsedRealtimeMillis = 10_000L, wallClockMillis = 1_000_000L)
         val provider = FakeModelProvider(listOf(ModelEvent.Completed(FinishReason.STOP)))
         val viewModel = viewModel(provider, clock)
+        viewModel.onIntent(PaperUiIntent.SetMotionScale(0f))
 
         drawStroke(viewModel)
         dispatcher.scheduler.runCurrent()

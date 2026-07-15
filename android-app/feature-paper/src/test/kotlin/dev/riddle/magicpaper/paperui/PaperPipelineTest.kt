@@ -419,7 +419,7 @@ class PaperPipelineTest {
             beforeSubmittedInkOwnership = beforeSubmittedInkOwnership,
             beforePreparingStatePublished = beforePreparingStatePublished,
             afterInactivityDeadlineBeforeJobOwnership = afterInactivityDeadlineBeforeJobOwnership,
-    )
+    ).apply { onIntent(PaperUiIntent.SetMotionScale(0f)) }
 
     private fun draw(viewModel: PaperViewModel, id: String = "s") {
         val a = NormalizedPoint(.1f, .2f, .01f)

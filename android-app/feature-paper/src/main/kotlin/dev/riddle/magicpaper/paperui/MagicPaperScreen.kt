@@ -50,6 +50,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.riddle.magicpaper.paper.MagicPaperView
 import dev.riddle.magicpaper.model.SettingsEntryMode
+import kotlinx.coroutines.flow.Flow
 
 @Composable
 fun MagicPaperRoute(
@@ -77,8 +78,11 @@ fun MagicPaperScreen(
     val context = LocalContext.current
     val effectiveMotionScaleSource = motionScaleSource ?: remember(context) { AndroidMotionScaleSource(context) }
     val motionScales = remember(effectiveMotionScaleSource) { effectiveMotionScaleSource.scales() }
-    val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 0f)
+    val durationScale by motionScales.collectAsStateWithLifecycle(initialValue = 1f)
     val effectiveRuneMotionPolicy = runeMotionPolicy ?: RuneMotionPolicy(durationScale)
+    LaunchedEffect(motionScales, onIntent) {
+        forwardObservedMotionScales(motionScales, onIntent)
+    }
     Box(
         modifier.fillMaxSize().background(Color(0xFFF4F0E5)),
     ) {
@@ -160,6 +164,13 @@ fun MagicPaperScreen(
             }
         }
     }
+}
+
+internal suspend fun forwardObservedMotionScales(
+    scales: Flow<Float>,
+    onIntent: (PaperUiIntent) -> Unit,
+) {
+    scales.collect { scale -> onIntent(PaperUiIntent.SetMotionScale(scale)) }
 }
 
 private fun statusBackground(phase: PaperPhase): Color = when (phase) {

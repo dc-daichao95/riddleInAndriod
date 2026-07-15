@@ -443,7 +443,7 @@ class PaperLifecycleTest {
             savedStateHandle = savedStateHandle,
             workerDispatcher = dispatcher,
             clock = TestAppClock(dispatcher.scheduler),
-        )
+        ).apply { onIntent(PaperUiIntent.SetMotionScale(0f)) }
         val store = ViewModelStore()
         val factory = object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {

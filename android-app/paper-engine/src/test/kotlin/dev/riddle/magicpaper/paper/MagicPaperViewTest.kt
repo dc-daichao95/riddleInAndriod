@@ -5,6 +5,9 @@ import android.view.MotionEvent
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlin.test.assertSame
+import dev.riddle.magicpaper.model.NormalizedPoint
+import dev.riddle.magicpaper.model.PaperStroke
+import dev.riddle.magicpaper.model.PaperTool
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
@@ -44,6 +47,27 @@ class MagicPaperViewTest {
         view.submitRenderModel(model.copy())
 
         assertSame(before, renderCache(view))
+    }
+
+    @Test
+    fun `successive dissolve stages reuse the source bitmap cache`() {
+        val view = view()
+        val stroke = PaperStroke(
+            "source",
+            PaperTool.PEN,
+            listOf(NormalizedPoint(.1f, .2f, .02f), NormalizedPoint(.8f, .7f, .02f)),
+        )
+        view.submitRenderModel(PaperRenderModel(listOf(stroke)))
+        val source = renderCache(view) as CachedInkBitmap
+        view.submitRenderModel(PaperRenderModel(listOf(stroke), dissolveStage = 0))
+        val stageZero = renderCache(view) as CachedInkBitmap
+
+        view.submitRenderModel(PaperRenderModel(listOf(stroke), dissolveStage = 1))
+        val stageOne = renderCache(view) as CachedInkBitmap
+
+        assertSame(source.bitmap, stageZero.bitmap)
+        assertSame(stageZero.bitmap, stageOne.bitmap)
+        assertTrue(!stageOne.bitmap.isRecycled)
     }
 
     private fun renderCache(view: MagicPaperView): Any? = MagicPaperView::class.java

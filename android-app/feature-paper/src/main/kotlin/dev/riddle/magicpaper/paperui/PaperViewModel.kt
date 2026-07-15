@@ -49,6 +49,7 @@ sealed interface PaperUiIntent {
     data object OpenSettings : PaperUiIntent
     data class SetPortraitLocked(val locked: Boolean) : PaperUiIntent
     data class SetSettingsEntryMode(val mode: SettingsEntryMode) : PaperUiIntent
+    data class SetMotionScale(val scale: Float) : PaperUiIntent
 }
 
 sealed interface PaperEffect { data object OpenSettings : PaperEffect }
@@ -106,6 +107,7 @@ class PaperViewModel(
     private val inactivityJob = AtomicReference<Job?>()
     private val activeTurnJob = AtomicReference<Job?>()
     private val settingsOpen = AtomicBoolean(false)
+    private val motionScale = AtomicReference(1f)
 
     init {
         val recoveryBaselineRevision = draftRevision.get()
@@ -182,6 +184,7 @@ class PaperViewModel(
             is PaperUiIntent.SetSettingsEntryMode -> viewModelScope.launch(workerDispatcher) {
                 preferences.setSettingsEntryMode(intent.mode)
             }
+            is PaperUiIntent.SetMotionScale -> motionScale.set(intent.scale.coerceAtLeast(0f))
         }
     }
 
@@ -281,30 +284,7 @@ class PaperViewModel(
             }
             if (!ownershipAcquired) return
             submission = candidate
-            var preparingPublished = false
-            while (!preparingPublished) {
-                val current = mutableState.value
-                beforePreparingStatePublished()
-                when (synchronized(turnOwnershipLock) {
-                    if (!ownerJob.isActive || activeTurnJob.get() !== ownerJob ||
-                        generation != turnGeneration.get() || settingsOpen.get() || submittedInk.get() !== candidate
-                    ) {
-                        PreparingPublication.STALE
-                    } else {
-                        val preparing = current.copy(
-                            renderModel = PaperRenderModel(emptyList(), dissolveStage = 0),
-                            phase = PaperPhase.Preparing,
-                            reply = "",
-                        )
-                        if (mutableState.compareAndSet(current, preparing)) PreparingPublication.PUBLISHED
-                        else PreparingPublication.RETRY
-                    }
-                }) {
-                    PreparingPublication.STALE -> return
-                    PreparingPublication.PUBLISHED -> preparingPublished = true
-                    PreparingPublication.RETRY -> Unit
-                }
-            }
+            if (!publishPreparingOwnership(generation, ownerJob, candidate)) return
             awaitDraftWrite(runDraftRevision)
             val markerPersisted = persistenceMutex.withLock {
                 if (!isCurrentRun(generation, runDraftRevision)) return@withLock false
@@ -324,6 +304,7 @@ class PaperViewModel(
                 }
             }
             if (!markerPersisted) return
+            if (!runInputDissolve(generation, ownerJob, candidate)) return
 
             val selected = modelSelection.selected()
             check(selected.capabilities.streaming) { "Selected model does not support streaming" }
@@ -419,6 +400,88 @@ class PaperViewModel(
             activeTurnJob.compareAndSet(currentCoroutineContext()[Job], null)
         }
     }
+
+    private suspend fun runInputDissolve(
+        generation: Long,
+        ownerJob: Job,
+        submission: SubmittedInk,
+    ): Boolean {
+        for (stage in 0 until INPUT_DISSOLVE_STAGES) {
+            if (!publishDissolveStage(generation, ownerJob, submission, stage)) return false
+            val delayMillis = (INPUT_DISSOLVE_STAGE_MILLIS * motionScale.get()).toLong()
+            if (delayMillis == 0L) yield() else clock.deadlineAfter(delayMillis).await()
+        }
+        return synchronized(turnOwnershipLock) {
+            if (!ownsSubmission(generation, ownerJob, submission)) {
+                false
+            } else {
+                mutableState.update { current ->
+                    current.copy(renderModel = PaperRenderModel(), phase = PaperPhase.Preparing, reply = "")
+                }
+                true
+            }
+        }
+    }
+
+    private suspend fun publishPreparingOwnership(
+        generation: Long,
+        ownerJob: Job,
+        submission: SubmittedInk,
+    ): Boolean {
+        while (true) {
+            val current = mutableState.value
+            beforePreparingStatePublished()
+            when (synchronized(turnOwnershipLock) {
+                if (!ownsSubmission(generation, ownerJob, submission)) {
+                    PreparingPublication.STALE
+                } else {
+                    val preparing = current.copy(
+                        renderModel = PaperRenderModel(submission.strokes),
+                        phase = PaperPhase.Preparing,
+                        reply = "",
+                    )
+                    if (mutableState.compareAndSet(current, preparing)) PreparingPublication.PUBLISHED
+                    else PreparingPublication.RETRY
+                }
+            }) {
+                PreparingPublication.STALE -> return false
+                PreparingPublication.PUBLISHED -> return true
+                PreparingPublication.RETRY -> Unit
+            }
+        }
+    }
+
+    private fun publishDissolveStage(
+        generation: Long,
+        ownerJob: Job,
+        submission: SubmittedInk,
+        stage: Int,
+    ): Boolean {
+        while (true) {
+            val current = mutableState.value
+            when (synchronized(turnOwnershipLock) {
+                if (!ownsSubmission(generation, ownerJob, submission)) {
+                    PreparingPublication.STALE
+                } else {
+                    val preparing = current.copy(
+                        renderModel = PaperRenderModel(submission.strokes, dissolveStage = stage),
+                        phase = PaperPhase.Preparing,
+                        reply = "",
+                    )
+                    if (mutableState.compareAndSet(current, preparing)) PreparingPublication.PUBLISHED
+                    else PreparingPublication.RETRY
+                }
+            }) {
+                PreparingPublication.STALE -> return false
+                PreparingPublication.PUBLISHED -> return true
+                PreparingPublication.RETRY -> Unit
+            }
+        }
+    }
+
+    private fun ownsSubmission(generation: Long, ownerJob: Job, submission: SubmittedInk): Boolean =
+        ownerJob.isActive && activeTurnJob.get() === ownerJob &&
+            generation == turnGeneration.get() && !settingsOpen.get() && submittedInk.get() === submission
 
     private fun cancelActiveTurn() {
         if (!mutableState.value.canCancel) return
@@ -553,6 +616,8 @@ class PaperViewModel(
 
     companion object {
         const val INACTIVITY_MILLIS = 2_800L
+        const val INPUT_DISSOLVE_STAGE_MILLIS = 70L
+        const val INPUT_DISSOLVE_STAGES = 14
         private const val ACTIVE_TURN_KEY = "paper_active_turn"
         private const val RUN_TOKEN_KEY = "paper_active_run_token"
         private const val PAGE_IMAGE_PROMPT = "Read and respond to the handwriting in this page image."

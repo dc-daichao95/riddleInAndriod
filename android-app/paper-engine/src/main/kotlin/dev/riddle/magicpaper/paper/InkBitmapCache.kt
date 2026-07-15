@@ -18,8 +18,21 @@ class InkBitmapCache(
     private val pattern: DissolvePattern = DissolvePattern(),
     private val inkColor: Int = Color.BLACK,
 ) {
+    private var sourceCache: SourceCache? = null
+
     fun build(strokes: List<PaperStroke>, width: Int, height: Int, dissolveStage: Int?): CachedInkBitmap {
         require(width > 0 && height > 0)
+        val cached = sourceCache
+        if (cached != null && !cached.bitmap.isRecycled && cached.strokes == strokes && cached.width == width && cached.height == height &&
+            dissolveStage != null && (cached.dissolveStage == null || dissolveStage >= cached.dissolveStage)
+        ) {
+            if (cached.dissolveStage == null || dissolveStage > cached.dissolveStage) {
+                applyDissolve(cached.bitmap, dissolveStage)
+            }
+            sourceCache = cached.copy(dissolveStage = dissolveStage)
+            return CachedInkBitmap(cached.bitmap)
+        }
+
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -42,6 +55,7 @@ class InkBitmapCache(
             }
         }
         if (dissolveStage != null) applyDissolve(bitmap, dissolveStage)
+        sourceCache = SourceCache(strokes.toList(), width, height, dissolveStage, bitmap)
         return CachedInkBitmap(bitmap)
     }
 
@@ -57,4 +71,12 @@ class InkBitmapCache(
         }
         bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     }
+
+    private data class SourceCache(
+        val strokes: List<PaperStroke>,
+        val width: Int,
+        val height: Int,
+        val dissolveStage: Int?,
+        val bitmap: Bitmap,
+    )
 }

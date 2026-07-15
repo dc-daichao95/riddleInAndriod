@@ -139,8 +139,10 @@ class MagicPaperView @JvmOverloads constructor(
 
     private fun rebuildRenderCache() {
         if (width <= 0 || height <= 0) return
-        renderCache?.bitmap?.recycle()
-        renderCache = inkBitmapCache.build(renderModel.strokes, width, height, renderModel.dissolveStage)
+        val previous = renderCache
+        val updated = inkBitmapCache.build(renderModel.strokes, width, height, renderModel.dissolveStage)
+        if (previous?.bitmap !== updated.bitmap) previous?.bitmap?.recycle()
+        renderCache = updated
     }
 
     private fun drawPoint(canvas: Canvas, point: NormalizedPoint) {

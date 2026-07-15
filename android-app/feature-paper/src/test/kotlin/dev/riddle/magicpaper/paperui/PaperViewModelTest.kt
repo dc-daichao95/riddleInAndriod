@@ -193,7 +193,7 @@ class PaperViewModelTest {
         savedStateHandle = SavedStateHandle(),
         workerDispatcher = dispatcher,
         clock = TestAppClock(dispatcher.scheduler),
-    )
+    ).apply { onIntent(PaperUiIntent.SetMotionScale(0f)) }
 
     private fun drawStroke(viewModel: PaperViewModel) {
         val first = NormalizedPoint(.1f, .2f, .01f)
