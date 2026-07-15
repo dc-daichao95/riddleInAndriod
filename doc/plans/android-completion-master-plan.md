@@ -12,13 +12,13 @@
 
 ## Global Constraints
 
-- Preserve the Rust implementation and keep all Android work under `android-app/`.
+- Keep the only active product and all Gradle work under `android-app/`; retired behavior provenance is available in Git history at `a1a155e`.
 - Preserve identical product behavior on API 33 and API 36; do not add a reduced Android 13 mode.
 - Keep provider-neutral domain/UI contracts; provider-specific differences stay inside adapters and capability metadata.
 - Never persist or log raw API keys, authorization headers, complete prompts, complete responses, or user ink.
 - Do not use a production `FakeModelProvider`; it remains available only through explicit test/preview injection.
 - Every behavior change follows RED → GREEN → Refactor → Verify → independent review → scoped commit.
-- Do not stage pre-existing user changes in `.superpowers/sdd/task-3-report.md`, `README.md`, `doc/TODO.md`, or `doc/detailed-design.md` unless the user explicitly approves that exact diff.
+- Do not stage pre-existing user changes in `.superpowers/sdd/task-3-report.md` or `doc/TODO.md` unless the user explicitly approves that exact diff. The Android-only cleanup separately authorized the root README replacement and retired detailed-design deletion.
 - Tool-capable Agent execution remains Phase 2 and is not part of this release.
 
 ## Approved specifications

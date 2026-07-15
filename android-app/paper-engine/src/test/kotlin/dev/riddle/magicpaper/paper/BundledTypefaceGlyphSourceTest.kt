@@ -16,11 +16,12 @@ import java.util.concurrent.CancellationException
 class BundledTypefaceGlyphSourceTest {
     private val repository = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
         .first { it.resolve("AGENTS.md").isFile }
+    private val fonts = repository.resolve("android-app/paper-engine/src/main/assets/fonts")
 
     @Test fun `official bundled typefaces rasterize thin and trace latin and cjk paths`() {
         val source = AndroidTypefaceReplyGlyphSource(
-            latin = Typeface.createFromFile(repository.resolve("fonts/DancingScript.ttf")),
-            cjk = Typeface.createFromFile(repository.resolve("fonts/LXGWWenKai-Regular.ttf")),
+            latin = Typeface.createFromFile(fonts.resolve("DancingScript.ttf")),
+            cjk = Typeface.createFromFile(fonts.resolve("LXGWWenKai-Regular.ttf")),
         )
 
         assertTrue(source.strokes(ReplyFont.LATIN, "Magic").flatten().size > 20)
@@ -28,7 +29,7 @@ class BundledTypefaceGlyphSourceTest {
     }
 
     @Test fun `lxgw font retains official family and version names`() {
-        val names = readSfntNames(repository.resolve("fonts/LXGWWenKai-Regular.ttf"))
+        val names = readSfntNames(fonts.resolve("LXGWWenKai-Regular.ttf"))
         assertTrue(names[1].orEmpty().any { it.contains("LXGW WenKai", ignoreCase = true) }, names.toString())
         assertTrue(names[5].orEmpty().any { it.contains("1.522") }, names.toString())
     }

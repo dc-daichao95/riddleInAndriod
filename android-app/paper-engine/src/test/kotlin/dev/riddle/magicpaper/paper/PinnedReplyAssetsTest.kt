@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 class PinnedReplyAssetsTest {
     @Test fun `pinned reply assets exist with exact checksums and licenses`() {
         val repository = repositoryRoot()
-        val fonts = repository.resolve("fonts")
+        val fonts = repository.resolve("android-app/paper-engine/src/main/assets/fonts")
         val unicode = repository.resolve("android-app/paper-engine/unicode-data/15.0.0")
         assertSha(fonts.resolve("LXGWWenKai-Regular.ttf"), "39ad71264b588165b469e35e6afb162a378dacd1f95348160240ba9038ac3009")
         assertSha(fonts.resolve("DancingScript.ttf"), "21808625578fe8d8cd10cb684be546dca077b27cd03a53a2f1ec11dc743c924c")

@@ -30,16 +30,16 @@ git status --short
 git log -12 --oneline
 ```
 
-若分支尚未推送，应迁移完整仓库（包含 `.git`）或先生成 Git bundle。不要只复制 `android-app/`，因为规格、Rust 行为参考、提交历史和未提交用户文件同样是基线组成部分。
+若分支尚未推送，应迁移完整仓库（包含 `.git`）或先生成 Git bundle。不要只复制 `android-app/`，因为规格、提交历史和未提交用户文件同样是基线组成部分。退役实现仅在 Git 历史修订 `a1a155e` 中保留，不是当前工作树依赖。
 
 ## 3. 不得覆盖的工作树状态
 
 快照时存在以下用户改动，任何自动化均不得重置、覆盖或暂存，除非用户明确批准对应 diff：
 
 - `.superpowers/sdd/task-3-report.md`
-- `README.md`
 - `doc/TODO.md`
-- `doc/detailed-design.md`
+
+Android-only cleanup 已明确批准替换根 `README.md` 并删除退役 detailed-design；不要把这两项恢复为旧的受保护状态。
 
 存在两个未跟踪、已获准用于本项目的原创图标源文件，也不得在迁移时遗漏：
 

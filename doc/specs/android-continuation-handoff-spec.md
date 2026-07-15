@@ -4,7 +4,7 @@
 - Product: Riddle Android Magic Paper
 - Runtime: Android 13/API 33 through Android 16/API 36
 - Baseline: `codex/android-magic-paper` @ `2cf0a88444751bf825fb88056a9f270f32659986`
-- Derivation: consolidates the four existing approved Android specifications and the 2026-07-16 Task 2 independent review; it introduces no new product choice
+- Derivation: consolidates the four existing approved Android specifications and the 2026-07-16 Task 2 independent review; retired behavior provenance is available in Git history at `a1a155e` and is not a working-tree dependency
 
 Implementation status: `CONT-FR-001..004` and `CONT-AC-001..004` are implemented and independently approved in `2cf0a88`; `CONT-FR-010..033` remain pending Tasks 3–6.
 
@@ -30,7 +30,7 @@ Non-goals:
 - 云 OCR、Android 12 及以下、iOS/桌面版；
 - 自动跨 Provider fallback；
 - 新数据库、网络、DI、序列化或 UI 框架；
-- 重写 Rust 参考实现或改写已发布 Git 历史；
+- 改写已发布 Git 历史或重新引入退役产品作为工作树依赖；
 - 静默使用测试 Provider、真实付费 API 或生产签名。
 
 ## 3. User stories and use cases

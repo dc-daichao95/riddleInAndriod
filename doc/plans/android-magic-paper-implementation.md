@@ -1,12 +1,12 @@
 # Android Magic Paper App Implementation Plan
 
-> **Historical plan:** Baseline Tasks 1–8 and original integration slices are retained for design and RED/GREEN evidence. All remaining execution and progress tracking is consolidated in `doc/plans/android-completion-master-plan.md`.
+> **Historical plan:** Baseline Tasks 1–8 and original integration slices are retained for design and RED/GREEN evidence. Retired source/build paths mentioned below exist only at pre-cleanup revision `a1a155e`. All remaining execution and progress tracking is consolidated in `doc/plans/android-completion-master-plan.md`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build one full-feature Android 13 through Android 16 application that preserves Riddle's full-screen enchanted-paper handwriting experience, supports responsive phone/foldable/tablet layouts, and streams replies from OpenAI-compatible and DeepSeek-compatible model services.
 
-**Architecture:** Keep the existing Rust app untouched and add a modular Kotlin project under `android-app/`. Compose owns navigation/settings/accessibility; a custom `MagicPaperView` owns low-latency input and Canvas animation; pure Kotlin state machines coordinate page submission, OCR/vision routing, Provider streams, and Room memory behind provider-neutral contracts.
+**Architecture:** Add a modular Kotlin project under `android-app/`. Compose owns navigation/settings/accessibility; a custom `MagicPaperView` owns low-latency input and Canvas animation; pure Kotlin state machines coordinate page submission, OCR/vision routing, Provider streams, and Room memory behind provider-neutral contracts.
 
 **Tech Stack:** Android Studio 2026.1.1, Android Studio JBR 21, Gradle 9.4.1, Android Gradle Plugin 9.2.1 with built-in Kotlin, Android compile platform API 36.1, `minSdk = 33`, `targetSdk = 36`, Compose BOM 2025.06.01, Material 3, coroutines 1.10.2, lifecycle 2.9.1, Room 2.7.2, OkHttp 4.12.0, kotlinx-serialization 1.8.1, ML Kit Digital Ink Recognition 18.1.0, JUnit 4.13.2, Turbine 1.2.1, Robolectric 4.14.1.
 
@@ -15,7 +15,7 @@
 - Android 13 through Android 16: `targetSdk = 36`, `minSdk = 33`; compile against API 36.1 with the AGP minor-API DSL.
 - Ship one APK with identical features on API 33 and API 36; no reduced Android 13 mode or version-specific test exclusions.
 - Keep compatibility changes minimal: adjust build configuration first and add a local API guard only when a failing API 33 gate proves it necessary.
-- Preserve the Rust implementation and root Cargo files unchanged.
+- Historical provenance was preserved at the time; it is now available only at pre-cleanup revision `a1a155e`.
 - Use `dev.riddle.magicpaper` as the initial namespace/application ID and `Riddle` as the display name.
 - No production behavior without a failing test first; configuration/generated wrapper files are the only scaffolding exception.
 - Do not call live paid Providers from normal tests or CI.
@@ -285,7 +285,7 @@ git commit -m "feat(android): add responsive page transforms and settings gestur
 
 - [ ] **Step 4: Implement reducer and dissolve algorithm**
 
-Port the deterministic coordinate hash from `src/ink.rs`. Keep the algorithm pure Kotlin. The reducer consumes historical MotionEvent samples, normalizes positions, maps pressure, and emits immutable intents.
+Port the deterministic coordinate hash from the retired `src/ink.rs` at pre-cleanup revision `a1a155e`. Keep the algorithm pure Kotlin. The reducer consumes historical MotionEvent samples, normalizes positions, maps pressure, and emits immutable intents.
 
 - [ ] **Step 5: Implement MagicPaperView**
 
@@ -720,7 +720,7 @@ Create a test profile with a sentinel key, exercise validation and a fake conver
 
 - [ ] **Step 5: Update documentation**
 
-Document architecture, module responsibilities, state transitions, Provider profile setup, fake Provider mode, ML Kit model preparation, emulator/device matrix, privacy behavior, known limitations, and exact verification commands. Add Android build/cache/local/secret outputs to `.gitignore` without changing existing Rust ignore behavior.
+Document architecture, module responsibilities, state transitions, Provider profile setup, fake Provider mode, ML Kit model preparation, emulator/device matrix, privacy behavior, known limitations, and exact verification commands. Add Android build/cache/local/secret outputs to `.gitignore`.
 
 - [ ] **Step 6: Mark specification implemented only after evidence exists**
 

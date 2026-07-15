@@ -1,10 +1,12 @@
 # Android-only Repository Cleanup Specification
 
-- Status: `approved`
+- Status: `implemented`
 - Product: Riddle Android Magic Paper
 - Approval: user selected complete Android-only conversion and approved the cleanup design
 - Runtime: Android 13/API 33 through Android 16/API 36
 - Baseline: `codex/android-magic-paper` at or after `a1a155e`
+
+Implementation evidence (2026-07-16): font-location tests produced the required missing-path RED before relocation; pinned hashes remained unchanged; focused font/pinned/merged-asset verification passed; the full compatibility, JVM, lint, and debug assembly gate passed; and Android 16 `MagicRuneSettingsTest` passed 8/8 with zero failures or skips.
 
 ## 1. Problem statement and user value
 

@@ -4,12 +4,11 @@
 - Product: Riddle Android
 - Target platform: Android 13 through Android 16 / API 33 through API 36; compile platform API 36.1
 - Design approval: 2026-07-12
-- Reference implementation: Rust application under `src/`
-- Reference design: `doc/detailed-design.md`
+- Historical behavior provenance: the retired implementation and design are available in Git history at `a1a155e`; they are not working-tree dependencies.
 
 ## 1. Problem statement and user value
 
-Riddle currently provides a Harry-Potter-like enchanted diary experience on reMarkable Paper Pro. The Android product must preserve that immersive behavior on Android 13 through Android 16 phones, foldables, and tablets while adding secure configuration for multiple OpenAI-compatible model services.
+Riddle provides a Harry-Potter-like enchanted diary experience on Android 13 through Android 16 phones, foldables, and tablets, with secure configuration for multiple OpenAI-compatible model services. Historical product behavior provenance is available in Git history at `a1a155e`.
 
 The user writes directly on a full-screen magical paper surface. After the user rests the pen or finger, the paper consumes the ink, consults the configured model, and writes a response back stroke by stroke. Conventional chat chrome must not replace this interaction.
 
@@ -35,7 +34,7 @@ The first usable Android release includes:
 
 ## 3. Non-goals
 
-The first release does not include model-triggered Android tools, automatic cross-provider fallback, Android versions earlier than API 33, cloud synchronization, reMarkable memory migration, or background conversations after cancellation. Tool-agent work is tracked in `doc/TODO.md` and requires a separate approved specification.
+The first release does not include model-triggered Android tools, automatic cross-provider fallback, Android versions earlier than API 33, cloud synchronization, legacy-device memory migration, or background conversations after cancellation. Tool-agent work is tracked in `doc/TODO.md` and requires a separate approved specification.
 
 ## 4. User stories
 
@@ -175,7 +174,7 @@ Additional states cover help, history reconstruction, settings, failure, cancell
 - `NFR-010`: User-visible strings shall use localized Android resources.
 - `NFR-011`: Prompts, responses, images, credentials, and memories shall be redacted from default diagnostics.
 - `NFR-012`: State, parsing, persistence, and transforms shall be deterministic under controlled tests.
-- `NFR-013`: Existing Rust code and build files shall remain unchanged unless separately requested.
+- `NFR-013`: Historical provenance shall remain recoverable from Git history without becoming a current build dependency.
 
 ## 7. Architecture
 
@@ -316,8 +315,8 @@ Required gates after scaffolding:
 
 ## 13. Migration and compatibility
 
-- No Rust-memory migration is included.
-- The Rust application remains untouched.
+- No legacy-product memory migration is included.
+- Retired behavior provenance remains available in Git history at `a1a155e` and is not required for current development.
 - Android Room started at schema version 1; the approved magic-paper text-pipeline repair advances it to version 2 with an `interrupted_runs` table and a populated-v1 migration test.
 - Provider adapters remain behind stable domain contracts.
 - Unknown, corrupt, or future settings-entry policy IDs fall back to `magic_rune_button`; the legacy `three_finger_long_press` value is retained only when it was explicitly persisted.
@@ -334,7 +333,7 @@ Implementation proceeds in independently testable slices:
 6. Room memory and reconstruction;
 7. settings, portrait lock, recovery, accessibility, and device verification.
 
-Each slice keeps the fake Provider experience runnable. Rollback disables/removes the newest slice without changing Rust or corrupting prior Android data.
+Each slice keeps the fake Provider experience runnable. Rollback disables/removes the newest slice without corrupting prior Android data.
 
 ## 15. Decisions
 

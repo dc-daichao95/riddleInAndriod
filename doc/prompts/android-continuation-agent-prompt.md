@@ -27,9 +27,9 @@
 
 始终保护以下既有用户改动，不覆盖、不暂存、不提交：
 - .superpowers/sdd/task-3-report.md
-- README.md
 - doc/TODO.md
-- doc/detailed-design.md
+
+Android-only cleanup 已明确批准替换根 README 并删除退役 detailed-design；不要恢复旧文件。退役行为参考仅在 Git 历史修订 a1a155e 中可用，不是当前开发依赖。
 
 以下原创图标源在基线提交中未跟踪；确认它们已通过独立迁移带入，但只在 Task 5 范围化提交：
 - android-app/app/src/main/assets/branding/riddle-icon-original.png
@@ -45,7 +45,7 @@
 
 首次 wrapper 运行可能需要从 services.gradle.org 下载 Gradle。若受沙箱/网络限制，使用正常审批流程请求网络，不要伪造测试结果或改 wrapper 版本。
 
-开发生命周期必须严格执行：Explore → Specify → Review → Plan → Red → Green → Refactor → Verify → Document。所有行为修复先写最小回归测试并观察它因预期原因失败。每个任务完成后进行规格符合性与代码质量独立评审，再做范围化提交。不要把多个任务混入一个提交。不要修改 Rust 参考实现。
+开发生命周期必须严格执行：Explore → Specify → Review → Plan → Red → Green → Refactor → Verify → Document。所有行为修复先写最小回归测试并观察它因预期原因失败。每个任务完成后进行规格符合性与代码质量独立评审，再做范围化提交。不要把多个任务混入一个提交，也不要重新引入退役产品作为工作树依赖。
 
 当前真实状态：
 - Task 1 已接受：147120f + ac344d3。

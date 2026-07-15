@@ -1,12 +1,21 @@
-/target/
-/dist/
 /.worktrees/
-.superpowers/
+/.superpowers/
 *.log
+
 /android-app/.gradle/
 /android-app/.kotlin/
+/android-app/local.properties
 /android-app/build/
 /android-app/**/build/
+/.idea/
+*.iml
 
-# Never commit a real API key.
-/oracle.env
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+*.apk
+*.aab
+
+/.android/
+/.avd/

@@ -17,7 +17,7 @@
 - Android minSdk 33, targetSdk 36, compile SDK 36.1.
 - No new runtime dependencies or vendor-name branching.
 - No live provider keys in tests/logs/source.
-- Preserve existing user modifications to `.superpowers/sdd/task-3-report.md`, `README.md`, `doc/TODO.md`, and `doc/detailed-design.md` unless explicitly updating the additive TODO tracking section.
+- Preserve existing user modifications to `.superpowers/sdd/task-3-report.md` and `doc/TODO.md` unless explicitly updating the additive TODO tracking section. The Android-only cleanup separately authorized the root README replacement and retired detailed-design deletion.
 - Every behavior change uses observed RED, minimal GREEN, refactor, full module gate and independent review.
 
 ---

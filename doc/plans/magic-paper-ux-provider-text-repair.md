@@ -1,6 +1,6 @@
 # Magic Paper UX, Provider Setup, and Text Pipeline Repair Plan
 
-> **Historical plan:** Completed R0–R5b foundations and original acceptance evidence remain here. Unfinished repair and release work is governed by `doc/plans/android-completion-master-plan.md`.
+> **Historical plan:** Completed R0–R5b foundations and original acceptance evidence remain here. Retired source paths mentioned below exist only at pre-cleanup revision `a1a155e`. Unfinished repair and release work is governed by `doc/plans/android-completion-master-plan.md`.
 
 > Required execution method: `superpowers:subagent-driven-development`. Each slice follows Red → Green → Refactor → Verify → Review and receives its own scoped commit.
 
@@ -118,7 +118,7 @@
 - [ ] Add failing tests for absent pinned font/checksum/OFL and absent pinned Unicode corpus/license/checksum, plus Latin, CJK, combining marks, variation selectors, ZWJ emoji, RTL paragraphs, unsupported code points, delta splits inside clusters, wrapping, and multi-page no-gap/no-overlap source ranges. The conformance test must enumerate every official `GraphemeBreakTest.txt` case. API 33/36 golden output compares normalized metadata, not antialiased bitmap bytes.
 - [ ] Run `./gradlew :paper-engine:testDebugUnitTest --tests '*ReplyStrokePlanner*'`; RED is the missing planner/segmenter.
 - [ ] During GREEN, download only the unmodified official LXGW WenKai Regular v1.522 TTF and Unicode 15.0.0 `GraphemeBreakTest.txt`; record URLs/SHA-256, verify internal font name/version, and include their OFL/Unicode licenses. Do not subset/rename/modify the font.
-- [ ] Port rasterize/thin/trace concepts from `src/script.rs`; use internal pinned Unicode-15.0 grapheme rules. Dancing Script serves supported Latin, LXGW serves supported CJK, and one labeled boxed rune represents each unsupported cluster while exact source text remains accessible.
+- [ ] Port rasterize/thin/trace concepts from the retired `src/script.rs` at pre-cleanup revision `a1a155e`; use internal pinned Unicode-15.0 grapheme rules. Dancing Script serves supported Latin, LXGW serves supported CJK, and one labeled boxed rune represents each unsupported cluster while exact source text remains accessible.
 - [ ] Plan pages from current safe bounds without discarding text; first-wins append planning never replays completed graphemes.
 - [ ] Re-run pure tests, verify font checksum/license tasks, and commit assets/planner/license evidence only.
 

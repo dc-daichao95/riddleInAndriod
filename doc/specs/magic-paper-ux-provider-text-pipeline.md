@@ -227,7 +227,7 @@ Font source decision evidence:
 
 - Official project/release source: `https://github.com/lxgw/LxgwWenKai`, release v1.522.
 - Official license: SIL Open Font License 1.1; the upstream project explicitly permits embedding and redistribution with the OFL text.
-- The repository's existing `fonts/DancingScript.ttf` and `fonts/OFL.txt` remain the Latin source. The LXGW asset shall have its own upstream OFL text and checksum manifest.
+- `android-app/paper-engine/src/main/assets/fonts/DancingScript.ttf` and its adjacent `OFL.txt` remain the Latin source. The LXGW asset has its own adjacent upstream OFL text and checksum manifest.
 - Unicode conformance source: `https://www.unicode.org/Public/15.0.0/ucd/auxiliary/GraphemeBreakTest.txt`; redistribute it with the Unicode data license from `https://www.unicode.org/license.txt` and a recorded SHA-256 checksum.
 
 ## 18. Unresolved questions
