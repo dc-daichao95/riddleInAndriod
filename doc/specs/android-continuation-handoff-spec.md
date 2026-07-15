@@ -3,12 +3,14 @@
 - Status: `approved`
 - Product: Riddle Android Magic Paper
 - Runtime: Android 13/API 33 through Android 16/API 36
-- Baseline: `codex/android-magic-paper` @ `09fda56a563d57c542183aac6d21aa56ff8ca862`
+- Baseline: `codex/android-magic-paper` @ `2cf0a88444751bf825fb88056a9f270f32659986`
 - Derivation: consolidates the four existing approved Android specifications and the 2026-07-16 Task 2 independent review; it introduces no new product choice
+
+Implementation status: `CONT-FR-001..004` and `CONT-AC-001..004` are implemented and independently approved in `2cf0a88`; `CONT-FR-010..033` remain pending Tasks 3–6.
 
 ## 1. Problem statement and user value
 
-当前应用已具备 Provider 设置、纸张输入、中文语言路由、回复规划/播放核心和 Room v2 恢复数据结构，但尚未形成可发布闭环。Task 2 仍有语言优先级、无模型配置、大字体布局和任务边界问题；回复尚未在生产 Canvas 中逐笔写回；显式魔法发送/取消/画笔/擦除和星尘效果未完整接入；图标与 API 33/36 发布验证未完成。
+当前应用已具备 Provider 设置、纸张输入、已复审通过的中文语言路由/显式语言优先策略、回复规划/播放核心和 Room v2 恢复数据结构，但尚未形成可发布闭环。回复尚未在生产 Canvas 中逐笔写回；显式魔法发送/取消/画笔/擦除和星尘效果未完整接入；图标与 API 33/36 发布验证未完成。
 
 后续开发应以最少范围修复这些断点，保持 Android 13 与 Android 16 功能一致，并交付可验证的本地签名 Release APK。
 
@@ -178,10 +180,10 @@ Forbidden：API Key、authorization header、endpoint query secret、完整 prom
 
 | Requirement | Required evidence |
 | --- | --- |
-| CONT-FR-001 | conversation policy unit tests，覆盖 explicit alternate language text/vision |
-| CONT-FR-002 | app composition + paper pipeline zero-call regression |
-| CONT-FR-003 | Compose tests：200% font、short window、keyboard/scroll |
-| CONT-FR-004 | staged-diff scope audit + Task 2R/Task 4 independent review |
+| CONT-FR-001 | Implemented `2cf0a88`: conversation policy unit tests，覆盖 explicit alternate language text/vision |
+| CONT-FR-002 | Implemented `2cf0a88`: selected null/empty/blank model regression + existing paper zero-call/ink-restore regression |
+| CONT-FR-003 | Implemented `2cf0a88`: API 36 Compose 320×360 dp、200% font、scroll/reachability |
+| CONT-FR-004 | Implemented `2cf0a88`: staged-diff scope audit + independent review approved |
 | CONT-FR-010 | populated v1→v2 migration instrumentation + production builder open |
 | CONT-FR-011..017 | planner/playback unit、ViewModel fake-clock、Canvas pixel、recreation/process recovery、flow instrumentation |
 | CONT-FR-020..025 | reducer/ViewModel、Compose semantics、bitmap particle、generation/cancel tests |
@@ -193,7 +195,7 @@ Forbidden：API Key、authorization header、endpoint query secret、完整 prom
 
 ## 16. Rollout and rollback plan
 
-按 Task 2R、3、4、5、6 独立提交和评审。Canvas pixel 测试通过前不删除可见 Compose reply fallback；迁移注册和恢复测试通过前不在生产启用 schema-v2 依赖；API 对等通过前不发布 Release。回滚单个任务时保留 profile、credential alias、语言、draft 和 Room 数据，不降级数据库 schema，也不静默清空用户数据。
+Task 2R 已独立提交和评审；后续按 Task 3、4、5、6 独立提交和评审。Canvas pixel 测试通过前不删除可见 Compose reply fallback；迁移注册和恢复测试通过前不在生产启用 schema-v2 依赖；API 对等通过前不发布 Release。回滚单个任务时保留 profile、credential alias、语言、draft 和 Room 数据，不降级数据库 schema，也不静默清空用户数据。
 
 ## 17. Decisions
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` to execute this plan task-by-task with specification and code-quality review after every task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** authoritative execution plan as of 2026-07-15. The three older Android plans remain historical design and RED/GREEN evidence; new work and progress are tracked here.
+**Status:** authoritative execution plan updated 2026-07-16. Tasks 1–2 are complete and independently approved; resume at Task 3. The three older Android plans remain historical design and RED/GREEN evidence.
 
 **Goal:** Finish one Android 13/API 33 through Android 16/API 36 Magic Paper application with validated multi-provider configuration, Chinese handwriting and same-language replies, immersive magic controls, reply stroke playback, adaptive branding, and a verified signed Release APK.
 
@@ -38,13 +38,12 @@
 | Reply planning/playback core | Pinned fonts/Unicode planning and provider-neutral playback state machine | `8506746`, `678e226` |
 | Recovery persistence | Room v2 active-run persistence, v1→v2 migration, interrupted no-replay recovery | `e900ca2` |
 | Repair specification | Provider/null/language/controls/reply requirements approved | `c1e2e1a` |
+| Provider/null setup repair | Null-safe protocol, deterministic catalog/manual model selection | `147120f`, `ac344d3` |
+| Language/configuration repair | Chinese routing, alternate-language priority, valid-model gate, large-font settings | `09fda56`, `2cf0a88` |
 
 ## File map for remaining work
 
-- `android-app/model-provider/.../ProviderJson.kt`: JSON-null-safe normalized stream mapping.
-- `android-app/app/.../AppContainer.kt`: nullable profile decoding, production provider selection, Room migration registration, recovery composition.
-- `android-app/feature-settings/...`: discovery/manual fallback state, model selector, handwriting language preference UI.
-- `android-app/conversation/...`: canonical language selection and provider-neutral same-language request policy.
+- `android-app/app/.../AppContainer.kt`: Room migration registration and recovery composition.
 - `android-app/feature-paper/.../PaperViewModel.kt`: generation lock, explicit send/cancel, playback lifecycle, durable recovery coordination.
 - `android-app/feature-paper/.../MagicPaperScreen.kt`: magic controls and accessibility semantics.
 - `android-app/paper-engine/.../MagicPaperView.kt`: immutable reply snapshot, cached stroke/cursor rendering, magical dissolve particles.
@@ -59,14 +58,11 @@
 
 **Interfaces:** Consume `ModelDiscoveryResult` and existing profile storage. Produce a profile whose `defaultModelId: String?` is never literal `"null"`, plus UI state that distinguishes catalog selection from disclosed manual fallback.
 
-- [ ] Add parser fixtures with JSON null in content, reasoning, tool fields, error message, and profile model; assert no literal `"null"` event/value.
-- [ ] Run `./gradlew :model-provider:testDebugUnitTest :app:testDebugUnitTest`; expect the new tests to fail because `optString` converts JSON null to text.
-- [ ] Add `optNullableString` semantics: return a value only when the field exists, is not JSON null, and is a nonblank String; apply it at nullable protocol/profile boundaries.
-- [ ] Add settings RED tests: non-empty success exposes stable dropdown; unsupported/empty preserves the preset, explains manual fallback, and requires minimum validation before save.
-- [ ] Run `./gradlew :feature-settings:testDebugUnitTest :app:compileDebugAndroidTestKotlin`; expect selector/fallback tests to fail.
-- [ ] Implement explicit catalog/manual-fallback UI states without provider-name branching or save-before-validation.
-- [ ] Run provider/settings tests and `./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.riddle.magicpaper.ProviderSetupTest`.
-- [ ] Independently review and commit only Task 1 files as `fix(android): repair model selection and null parsing`.
+- [x] Add Android/JVM parser and profile fixtures; reproduce and repair JSON null at nullable boundaries.
+- [x] Add catalog/manual-fallback tests, preserve preset, explain fallback, and require validation before save.
+- [x] Implement explicit catalog/manual-fallback UI states without provider-name branching or save-before-validation.
+- [x] Run 111 JVM tests, instrumentation compilation, and API 36 `ProviderSetupTest` 6/6.
+- [x] Independently review and commit Task 1 as `147120f` + `ac344d3`.
 
 ### Task 2: Chinese handwriting and same-language provider requests
 
@@ -74,14 +70,12 @@
 
 **Interfaces:** Produce `HandwritingLanguage { AUTOMATIC, SIMPLIFIED_CHINESE, TRADITIONAL_CHINESE, ENGLISH }`, canonical tags `zh-Hans`, `zh-Hant`, `en-US`, and a provider-neutral same-language instruction.
 
-- [ ] Add RED canonicalization tests: zh-CN/SG→zh-Hans, zh-TW/HK/MO→zh-Hant, explicit override under Locale.US, unknown persistence→AUTOMATIC.
-- [ ] Add RED pipeline test: recognizer returns `你好，魔法纸。`; captured request preserves it exactly and instructs a reply in the user's language.
-- [ ] Add RED composition test: no selected provider yields configuration-required and performs zero fake/recognizer/network calls.
-- [ ] Run conversation/paper/settings unit tests; expect failures for missing preference/policy and production fake fallback.
-- [ ] Implement stable preference persistence, canonical ML Kit selection/provisioning, and same-language text/vision request construction; remove hard-coded English-only vision instruction.
-- [ ] Remove automatic production fake-provider selection while retaining explicit test/preview injection.
-- [ ] Add English and Simplified Chinese resources; run module suites plus app lint/compile.
-- [ ] Independently review and commit as `fix(android): preserve handwriting and reply language`.
+- [x] Add RED canonicalization, exact recognized-text, language routing and missing-provider tests.
+- [x] Implement stable language preference, ML Kit routing, provider-neutral text/vision policy, and remove production fake fallback.
+- [x] Add RED review fixes for explicit alternate-language priority, null/blank selected model, and 200% font short-window reachability.
+- [x] Restore the Task 2 boundary by reverting the out-of-scope rune motion initial behavior.
+- [x] Run 185 JVM tests, instrumentation compilation, API 36 `MagicRuneSettingsTest` 8/8, and `lintDebug`.
+- [x] Independently review and commit Task 2/2R as `09fda56` + `2cf0a88`; no Critical/Important/Minor findings remain.
 
 ### Task 3: Production reply stroke rendering and Room recovery integration
 
@@ -142,4 +136,4 @@
 
 ## Execution order and self-review
 
-Execute strictly Task 1 → 2 → 3 → 4 → 5 → 6. Tasks 1–4 require observed RED/GREEN evidence and two-stage independent review. Every approved repair requirement maps to a task; process death, no replay, cancellation, privacy, localization, accessibility, reduced motion, and API parity have explicit gates. Phase 2 tool-capable Agent work remains deferred.
+Resume strictly at Task 3, then execute Task 4 → 5 → 6. Tasks 1–2 are complete. Remaining tasks require observed RED/GREEN evidence and two-stage independent review. Every approved repair requirement maps to a task; process death, no replay, cancellation, privacy, localization, accessibility, reduced motion, and API parity have explicit gates. Phase 2 tool-capable Agent work remains deferred.

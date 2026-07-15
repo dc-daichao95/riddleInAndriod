@@ -9,7 +9,8 @@
 - 仓库：<REPO_ROOT>
 - 工作树：<WORKTREE>
 - 分支：codex/android-magic-paper
-- 最低实现基线：09fda56a563d57c542183aac6d21aa56ff8ca862；当前 tip 应同时包含主题为 docs(android): add migration development handoff 的交接文档提交，允许是其后代
+- 最低实现基线：2cf0a88444751bf825fb88056a9f270f32659986；当前 tip 应同时包含后续迁移文档更新提交，允许是其后代
+- GitHub 远端分支：origin/codex-android-magic-paper；本地建议分支名仍为 codex/android-magic-paper
 
 第一步只做核验，不改代码：
 1. 完整阅读 <REPO_ROOT>/AGENTS.md 以及任何嵌套 AGENTS.md。
@@ -21,7 +22,7 @@
    - doc/specs/magic-paper-ux-provider-text-pipeline.md
    - doc/specs/magic-paper-controls-language-repair.md
    - doc/plans/android-completion-master-plan.md
-3. 运行 git branch --show-current、git rev-parse HEAD、git merge-base --is-ancestor 09fda56 HEAD、git status --short、git log -12 --oneline。
+3. 运行 git branch --show-current、git rev-parse HEAD、git merge-base --is-ancestor 2cf0a88 HEAD、git status --short、git log -12 --oneline。
 4. 如果最低实现基线不是当前 tip 的祖先、交接文档提交缺失，或工作树状态与迁移基线不同，先报告差异并判断它是迁移结果还是新用户改动；禁止 reset --hard、checkout --、clean 或改写历史。
 
 始终保护以下既有用户改动，不覆盖、不暂存、不提交：
@@ -48,19 +49,11 @@
 
 当前真实状态：
 - Task 1 已接受：147120f + ac344d3。
-- Task 2 实现已提交：09fda56，但独立评审为 Needs fixes，不得标记完成。
+- Task 2/2R 已接受：09fda56 + 2cf0a88；185/185 JVM、API 36 设置 8/8、lintDebug 通过，独立复审无 Critical/Important/Minor。
 - ReplyStrokePlanner/ReplyPlayback/Room v2 核心已提交，但尚未完整接入生产 UI/composition。
 - Tasks 3–6 未完成；最终 Release APK 未交付。
 
 严格按下面顺序继续：
-
-Task 2R — 关闭独立评审
-1. RED：添加 explicit alternate-language 的 text/vision policy 测试。生产指令必须表达“默认同手写语言，用户显式指定另一语言时服从用户”，不得解析/改写用户文本。
-2. RED：添加 enabled profile + null/blank defaultModelId 测试；期望 ConfigurationRequired、墨迹恢复、recognizer/raster/provider 均零调用。
-3. RED：添加 AppSettingsScreen 在 200% 字体、短窗口、compact width 的滚动/可达/键盘测试。
-4. 处理 09fda56 中属于 Task 4 的 reduced-motion/rune 初始化范围泄漏。不要 amend/rebase；通过普通后续提交让 Task 2R 的生产 diff 只表达语言/配置/布局修复，并在 Task 4 以专门测试承接控件行为。
-5. 运行 focused + combined JVM、instrumentation compile、API 36 MagicRuneSettingsTest；补全准确命令、RED 原因、XML 测试计数。
-6. 请求独立规格/代码评审；Critical/Important 清零后提交 fix(android): close language configuration review。
 
 Task 3 — 生产回复逐笔写回与 Room 恢复
 1. 在每个生产 Room builder 注册 RiddleDatabase.MIGRATION_1_2；先写已有 v1 安装 upgrade-open regression。

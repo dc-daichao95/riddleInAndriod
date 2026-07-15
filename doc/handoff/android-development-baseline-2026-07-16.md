@@ -13,9 +13,10 @@
 | 仓库 | `riddleInAndriod` |
 | 当前工作树 | `.worktrees/codex-android-magic-paper` |
 | 分支 | `codex/android-magic-paper` |
-| 最低实现基线 | `09fda56a563d57c542183aac6d21aa56ff8ca862` |
-| 实现基线主题 | `fix(android): preserve handwriting and reply language` |
-| 交接文档 | 位于最低实现基线之后的 `docs(android): add migration development handoff` 提交；迁移后以实际分支 tip 为准 |
+| 最低实现基线 | `2cf0a88444751bf825fb88056a9f270f32659986` |
+| 实现基线主题 | `fix(android): close language configuration review` |
+| 交接文档 | 本文的最终更新提交应位于最低实现基线之后；迁移后以实际分支 tip 为准 |
+| GitHub 远端分支 | `origin/codex-android-magic-paper`（本地分支仍为 `codex/android-magic-paper`） |
 | 主分支快照 | `main` @ `e28c7ce735551b9af91aea613b16fd4153be3d0c` |
 | 子模块 | 项目未依赖已知 Git 子模块；本机 Git for Windows 的 `git submodule status` 因缺少 Unix helper 未能再次确认 |
 
@@ -24,7 +25,7 @@
 ```powershell
 git checkout codex/android-magic-paper
 git rev-parse HEAD
-git merge-base --is-ancestor 09fda56 HEAD
+git merge-base --is-ancestor 2cf0a88 HEAD
 git status --short
 git log -12 --oneline
 ```
@@ -45,7 +46,7 @@ git log -12 --oneline
 - `android-app/app/src/main/assets/branding/riddle-icon-original.png`
 - `android-app/app/src/main/assets/branding/riddle-icon-chromakey.png`
 
-它们尚未进入 `09fda56`。迁移分支本身不会携带未跟踪文件；应通过加密介质或独立归档复制，校验后再由 Task 5 受控提交。不要迁移 API Key、签名口令、用户会话、临时数据库或 `C:\tmp` 下的签名材料。
+它们尚未进入 `2cf0a88`。迁移分支本身不会携带未跟踪文件；应通过加密介质或独立归档复制，校验后再由 Task 5 受控提交。不要迁移 API Key、签名口令、用户会话、临时数据库或 `C:\tmp` 下的签名材料。
 
 ## 4. 产品和兼容性基线
 
@@ -81,32 +82,29 @@ git log -12 --oneline
 | 已接受 | 确定性回复字形规划与 Provider 中立播放核心 | `8506746`、`678e226` |
 | 已接受核心，未接入生产 | Room v2 active-run、v1→v2 migration、interrupted/no-replay API | `e900ca2` |
 | 已接受 | Task 1：模型目录/手动 fallback、preset 保留、Android JSON null 修复 | `147120f`、`ac344d3` |
-| 已提交，评审未通过 | Task 2：手写语言、中文识别路由、同语请求、移除生产 Fake fallback | `09fda56` |
+| 已接受 | Task 2/2R：手写语言、中文识别路由、显式语言请求优先、有效模型门禁、大字体设置、移除生产 Fake fallback | `09fda56`、`2cf0a88` |
 
-Task 1 提交时证据：111 个 JVM 测试通过，API 36 `ProviderSetupTest` 6/6 通过，instrumentation Kotlin 编译通过。Task 2 提交时证据：184 个 JVM 测试通过，API 36 `MagicRuneSettingsTest` 7/7 通过，instrumentation Kotlin 编译通过。以上是历史证据，不等同于迁移环境的新鲜验证。
+Task 1 提交时证据：111 个 JVM 测试通过，API 36 `ProviderSetupTest` 6/6 通过，instrumentation Kotlin 编译通过。Task 2R 最终证据：conversation/settings/paper/app 共 185/185 个 JVM 测试通过，API 36 `MagicRuneSettingsTest` 8/8 通过，instrumentation Kotlin 编译和 `:app:lintDebug` 通过；独立复审 Spec Compliance/Code Quality 均 Pass，Critical/Important/Minor 为 0。以上是提交时证据，迁移环境仍需重新验证。
 
-## 7. 当前阻塞：Task 2 独立评审
+## 7. 最近完成：Task 2R 独立评审关闭
 
-2026-07-16 的独立评审结论为 **Needs fixes**，无 Critical，存在 4 个 Important：
+初次独立评审发现的 4 个 Important 已由 `2cf0a88` 关闭：
 
-1. `HandwritingLanguagePolicy` 的 system 指令无条件要求使用手写语言，可能压过用户“请用英文回答”等显式请求；文本和 vision 指令都必须改为“默认同语，显式指定优先”。
-2. 已启用 profile 但 `defaultModelId == null` 时，`AppContainer` 抛出普通异常并被映射为 `Failed`；必须映射为本地 `ConfigurationRequired`，且不得调用识别/网络。
-3. `AppSettingsScreen` 使用不可滚动固定 `Column`；在 200% 字体或短窗口可能裁切/压缩 Provider 区；必须加自适应滚动布局与 UI 回归。
-4. `09fda56` 包含 reduced-motion/rune 初始化行为，属于 Task 4 范围；不得改写历史。后续提交应明确分离：Task 2 只保留语言/配置修复，Task 4 承担控件动画行为及测试。
+1. text/vision system 指令现在默认同手写语言，但明确让用户指定的其他输出语言优先，用户原文保持不变。
+2. 已启用 profile 的 `defaultModelId` 为 null、空或纯空白时，在 composition 边界被视为无有效选择，进入 `ConfigurationRequired`，不启动识别、raster 或 Provider。
+3. 设置主体改为有界可滚动列表，320×360 dp、200% 字体的 API 36 回归可到达语言和 Provider 控件。
+4. `MagicPaperScreen` 的 motion 初始值恢复为 Task 2 之前的 `1f`，控件/reduced-motion 首帧策略重新归属 Task 4。
 
-评审还指出一个 Minor：Task 2 报告缺少部分精确命令、失败信息和测试数。迁移后应补足证据账本，但不要篡改既有测试结果。
-
-在这 4 项通过 RED→GREEN→回归验证并重新独立评审前，不得把 Task 2 标记完成，也不得开始 Task 3 的生产接入。
+RED/GREEN 命令、失败位置和测试计数已追加到 `.superpowers/sdd/android-completion-task-2-report.md`。最终独立复审结论为 **Approved**，Task 3 现在是唯一允许开始的下一原子任务。
 
 ## 8. 剩余任务顺序
 
-1. **Task 2R：语言/配置/大字体评审修复**：解决上一节 4 个 Important，补证据，重新评审。
-2. **Task 3：回复逐笔写回与恢复接入**：注册 `MIGRATION_1_2`；把 planner/playback/Room v2 接入 `PaperViewModel` 与 `MagicPaperView`；首 delta 出像素、追加不重播、分页、4–20 秒停留、0..9 消散、进程恢复不重发。
-3. **Task 4：魔法控件和星尘淡出**：显式发送/取消、请求期间写锁、画笔/擦除、可配置入口、14 阶段确定性星尘、reduced motion。
-4. **Task 5：原创图标适配**：Android adaptive/round/monochrome launcher icon、GitHub avatar 与 social preview、来源记录和小尺寸/遮罩检查。
-5. **Task 6：API 33/API 36 对等与 Release**：完整 test/lint/build、两台 AVD 相同测试清单、人工烟测、临时本地签名、签名/manifest/secret 验证、交付 Release APK。
+1. **Task 3：回复逐笔写回与恢复接入**：注册 `MIGRATION_1_2`；把 planner/playback/Room v2 接入 `PaperViewModel` 与 `MagicPaperView`；首 delta 出像素、追加不重播、分页、4–20 秒停留、0..9 消散、进程恢复不重发。
+2. **Task 4：魔法控件和星尘淡出**：显式发送/取消、请求期间写锁、画笔/擦除、可配置入口、14 阶段确定性星尘、reduced motion。
+3. **Task 5：原创图标适配**：Android adaptive/round/monochrome launcher icon、GitHub avatar 与 social preview、来源记录和小尺寸/遮罩检查。
+4. **Task 6：API 33/API 36 对等与 Release**：完整 test/lint/build、两台 AVD 相同测试清单、人工烟测、临时本地签名、签名/manifest/secret 验证、交付 Release APK。
 
-严格串行执行 Task 2R→3→4→5→6。每个任务都需要规格追踪、先失败测试、最小实现、验证、独立评审和范围化提交。
+严格串行执行 Task 3→4→5→6。每个任务都需要规格追踪、先失败测试、最小实现、验证、独立评审和范围化提交。
 
 ## 9. 工具链快照
 
@@ -140,7 +138,7 @@ ANDROID_SDK_ROOT=C:\Users\Chao_\AppData\Local\Android\Sdk
 5. 配置 `JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT` 和 `local.properties`。
 6. 首次 Gradle wrapper 运行需要访问 `services.gradle.org`；当前受限沙箱中的 `--version` 因网络权限失败，这属于环境限制，不是代码失败。
 7. 创建并启动 `Riddle_API_33`、`Riddle_API_36_1`；一次只启动一个 AVD，避免设备选择歧义。
-8. 先运行 JVM/编译基线，再完成 Task 2R；不要直接使用真实付费 Provider。
+8. 先运行 JVM/编译基线，再从 Task 3 开始；不要直接使用真实付费 Provider。
 
 建议基线命令（从 `android-app/` 运行）：
 
@@ -159,4 +157,4 @@ ANDROID_SDK_ROOT=C:\Users\Chao_\AppData\Local\Android\Sdk
 
 ## 12. 完成定义
 
-只有以下全部满足才可宣布开发完成：Task 2R 复审通过；Tasks 3–6 的规格测试全绿；`test`、`lint`、`assembleDebug`、`assembleRelease` 成功；API 33/36 测试清单一致且零失败/错误/跳过；无可见 `null`；中文识别/同语回复、回复逐笔写回、发送锁、取消、画笔/擦除、淡出、设置和竖屏锁烟测通过；签名 Release APK 验证并给出绝对路径；规格状态和追踪文档更新；没有提交密钥或受保护用户改动。
+只有以下全部满足才可宣布开发完成：Tasks 3–6 的规格测试全绿；`test`、`lint`、`assembleDebug`、`assembleRelease` 成功；API 33/36 测试清单一致且零失败/错误/跳过；无可见 `null`；中文识别/同语回复、回复逐笔写回、发送锁、取消、画笔/擦除、淡出、设置和竖屏锁烟测通过；签名 Release APK 验证并给出绝对路径；规格状态和追踪文档更新；没有提交密钥或受保护用户改动。

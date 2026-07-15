@@ -2,6 +2,8 @@
 
 > **Historical child plan:** Approved requirements remain authoritative, while execution order, completed dependencies, progress, device verification, branding, and Release handoff are consolidated in `doc/plans/android-completion-master-plan.md`.
 
+> **Progress 2026-07-16:** Child-plan Tasks 1–2 are complete in `147120f`, `ac344d3`, `09fda56`, and `2cf0a88`; the latest independent review is clean. Resume only from the authoritative master plan's Task 3.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Steps use checkbox syntax for tracking.
 
 **Goal:** Repair provider setup/null parsing, preserve Chinese handwriting/response language, and complete immersive send/tool/dissolve/reply playback behavior.

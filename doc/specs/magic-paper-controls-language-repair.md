@@ -6,6 +6,8 @@
 - Runtime: Android 13 / API 33 through Android 16 / API 36
 - Parent: `doc/specs/magic-paper-ux-provider-text-pipeline.md`
 
+Implementation progress (2026-07-16): `MCL-FR-001..010` are implemented and independently approved in `147120f`, `ac344d3`, `09fda56`, and `2cf0a88`. The latest gate passed 185/185 JVM tests, Android 16 `MagicRuneSettingsTest` 8/8, instrumentation compilation, and `lintDebug`. `MCL-FR-011..018` remain pending Tasks 3–4, so the overall specification remains `approved`, not `implemented`.
+
 ## 1. Problem statement and user value
 
 Installed builds can hide model selection when model discovery is unsupported or empty, render JSON null as visible reply text, silently use an English fake provider when no profile is selected, send Chinese handwriting to an English recognizer, and display model replies as ordinary Compose text. The paper also lacks explicit immersive send and tool controls, and its input dissolve lacks the intended magical character.
