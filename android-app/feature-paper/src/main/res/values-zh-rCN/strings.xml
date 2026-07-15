@@ -1,4 +1,8 @@
 <resources>
+    <string name="paper_preparing_recognition">正在准备手写识别</string>
+    <string name="paper_recognizing">正在设备上识别手写内容</string>
+    <string name="paper_recognition_preparation_failed">无法准备手写识别，墨迹已保留在纸张上。</string>
+    <string name="paper_recognition_failed">无法识别手写内容，墨迹已保留在纸张上。</string>
     <string name="paper_ready">纸张已就绪</string>
     <string name="paper_dissolving">墨迹正在消散</string>
     <string name="paper_preparing">墨迹正在消散，正在准备请求</string>

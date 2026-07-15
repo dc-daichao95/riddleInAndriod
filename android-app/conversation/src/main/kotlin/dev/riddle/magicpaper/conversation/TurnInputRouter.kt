@@ -26,7 +26,11 @@ class TurnInputRouter(
     private val recognizer: HandwritingRecognizer,
     private val localeProvider: () -> Locale = Locale::getDefault,
 ) {
-    suspend fun route(capabilities: ModelCapabilities, strokes: List<PaperStroke>): Result<TurnInput> {
+    suspend fun route(
+        capabilities: ModelCapabilities,
+        strokes: List<PaperStroke>,
+        onRecognitionStatus: (HandwritingRecognitionStatus) -> Unit = {},
+    ): Result<TurnInput> {
         if (capabilities.vision) {
             return rasterizer.rasterize(strokes).fold(
                 onSuccess = { Result.success(TurnInput.PageImage(it)) },
@@ -35,7 +39,7 @@ class TurnInputRouter(
         }
 
         return try {
-            recognizer.recognize(strokes, localeProvider()).fold(
+            recognizer.recognize(strokes, localeProvider(), onRecognitionStatus).fold(
                 onSuccess = { text ->
                     val recognizedText = text.trim()
                     if (recognizedText.isEmpty()) Result.failure(InputRoutingError.BlankRecognition)

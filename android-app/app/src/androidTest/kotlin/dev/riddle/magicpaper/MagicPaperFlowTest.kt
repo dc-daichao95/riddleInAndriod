@@ -13,6 +13,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -116,6 +118,7 @@ class MagicPaperFlowTest {
         compose.onNodeWithTag("paper_status", useUnmergedTree = true).assert(
             SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Polite),
         )
+        compose.onNodeWithTag("paper_status").assertIsDisplayed().assertTextEquals("Paper ready")
     }
 
     private fun drawStrokeThroughView(fromX: Float, fromY: Float, toX: Float, toY: Float) {

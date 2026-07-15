@@ -3,6 +3,7 @@ package dev.riddle.magicpaper.conversation
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.common.MlKitException
 import com.google.mlkit.common.model.RemoteModelManager
+import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.vision.digitalink.DigitalInkRecognition
 import com.google.mlkit.vision.digitalink.DigitalInkRecognitionModel
 import com.google.mlkit.vision.digitalink.DigitalInkRecognitionModelIdentifier
@@ -12,7 +13,9 @@ import dev.riddle.magicpaper.model.PaperStroke
 import dev.riddle.magicpaper.model.PaperTool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -22,42 +25,68 @@ import kotlin.coroutines.resumeWithException
 internal interface DigitalInkRecognitionBackend {
     fun supports(languageTag: String): Boolean
     suspend fun isModelDownloaded(languageTag: String): Boolean
+    suspend fun downloadModel(languageTag: String)
     suspend fun recognize(languageTag: String, strokes: List<PaperStroke>): String
 }
 
 class MlKitHandwritingRecognizer internal constructor(
     private val backend: DigitalInkRecognitionBackend,
+    applicationScope: CoroutineScope,
     private val fallbackLanguageTag: String = "en-US",
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : HandwritingRecognizer {
+    private val provisioning = RecognitionProvisioningCoordinator(
+        backend = object : RecognitionModelProvisioningBackend {
+            override suspend fun isModelDownloaded(key: RecognitionModelKey): Boolean =
+                backend.isModelDownloaded(key.languageTag)
+
+            override suspend fun downloadModel(key: RecognitionModelKey) =
+                backend.downloadModel(key.languageTag)
+        },
+        applicationScope = applicationScope,
+        dispatcher = dispatcher,
+    )
+
     constructor(
+        applicationScope: CoroutineScope,
         fallbackLanguageTag: String = "en-US",
         dispatcher: CoroutineDispatcher = Dispatchers.Default,
-    ) : this(MlKitDigitalInkBackend(), fallbackLanguageTag, dispatcher)
+    ) : this(MlKitDigitalInkBackend(), applicationScope, fallbackLanguageTag, dispatcher)
 
     override suspend fun recognize(strokes: List<PaperStroke>, locale: Locale): Result<String> =
+        recognize(strokes, locale) {}
+
+    override suspend fun recognize(
+        strokes: List<PaperStroke>,
+        locale: Locale,
+        onStatus: (HandwritingRecognitionStatus) -> Unit,
+    ): Result<String> =
         withContext(dispatcher) {
+            val requested = locale.toLanguageTag()
+            val selected = when {
+                backend.supports(requested) -> requested
+                backend.supports(fallbackLanguageTag) -> fallbackLanguageTag
+                else -> return@withContext Result.failure(
+                    HandwritingRecognitionError.UnsupportedLocale(requested),
+                )
+            }
             try {
-                val requested = locale.toLanguageTag()
-                val selected = when {
-                    backend.supports(requested) -> requested
-                    backend.supports(fallbackLanguageTag) -> fallbackLanguageTag
-                    else -> return@withContext Result.failure(
-                        HandwritingRecognitionError.UnsupportedLocale(requested),
-                    )
-                }
-                if (!backend.isModelDownloaded(selected)) {
-                    return@withContext Result.failure(
-                        HandwritingRecognitionError.ModelNotDownloaded(selected),
-                    )
-                }
+                onStatus(HandwritingRecognitionStatus.PREPARING_MODEL)
+                provisioning.ensureAvailable(RecognitionModelKey(selected, MODEL_VERSION))
+                onStatus(HandwritingRecognitionStatus.RECOGNIZING)
                 Result.success(backend.recognize(selected, strokes))
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (_: RecognitionProvisioningError.DownloadFailed) {
+                Result.failure(HandwritingRecognitionError.ModelDownloadFailed(selected))
             } catch (_: Exception) {
                 Result.failure(HandwritingRecognitionError.RecognitionFailed)
             }
         }
+
+    private companion object {
+        const val MODEL_VERSION = "mlkit-digital-ink-v1"
+    }
 }
 
 private class MlKitDigitalInkBackend(
@@ -67,6 +96,14 @@ private class MlKitDigitalInkBackend(
 
     override suspend fun isModelDownloaded(languageTag: String): Boolean =
         modelManager.isModelDownloaded(model(languageTag)).await()
+
+    override suspend fun downloadModel(languageTag: String) {
+        // ML Kit does not expose cancellation for this Task. Keep the coordinator entry alive until
+        // the real Task is terminal so another waiter cannot launch a duplicate model download.
+        withContext(NonCancellable) {
+            modelManager.download(model(languageTag), DownloadConditions.Builder().build()).await()
+        }
+    }
 
     override suspend fun recognize(languageTag: String, strokes: List<PaperStroke>): String {
         val recognizer = DigitalInkRecognition.getClient(

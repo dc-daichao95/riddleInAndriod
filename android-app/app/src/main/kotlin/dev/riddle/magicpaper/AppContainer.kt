@@ -126,7 +126,7 @@ class AppContainer(context: Context) {
     )
     private val turnInputRouter = TurnInputRouter(
         pageRasterizer,
-        MlKitHandwritingRecognizer(dispatcher = dispatchers.default),
+        MlKitHandwritingRecognizer(applicationScope = applicationScope, dispatcher = dispatchers.default),
     )
     val paperPreferences: PaperPreferences = SharedPaperPreferences(appContext)
     private val paperPersistence: PaperPersistence = RoomPaperPersistence(memoryRepository, appContext, clock)

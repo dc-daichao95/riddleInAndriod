@@ -2,6 +2,8 @@
     <string name="paper_ready">Paper ready</string>
     <string name="paper_dissolving">Ink dissolving</string>
     <string name="paper_preparing">Ink dissolving; preparing request</string>
+    <string name="paper_preparing_recognition">Preparing handwriting recognition</string>
+    <string name="paper_recognizing">Recognizing handwriting on this device</string>
     <string name="paper_thinking">Thinking</string>
     <string name="paper_reply_appearing">Reply appearing</string>
     <string name="paper_completed">Reply complete</string>
@@ -9,6 +11,8 @@
     <string name="paper_surface_label">Magic paper writing surface</string>
     <string name="paper_interrupted">Previous reply was interrupted</string>
     <string name="paper_failed">Reply failed</string>
+    <string name="paper_recognition_preparation_failed">Handwriting recognition could not be prepared. Your ink is still on the paper.</string>
+    <string name="paper_recognition_failed">Handwriting could not be recognized. Your ink is still on the paper.</string>
     <string name="paper_cancel">Cancel</string>
     <string name="paper_open_settings">Open magic settings</string>
     <string name="paper_help_title">Magic paper</string>

@@ -96,7 +96,7 @@ class PaperLifecycleTest {
         assertEquals(stateAtClear, viewModel.state.value)
     }
 
-    @Test fun `new draft wins when old cleanup already owns persistence lock`() = runTest(dispatcher) {
+    @Test fun `merged draft wins when old cleanup already owns persistence lock`() = runTest(dispatcher) {
         val persistence = DraftRacePersistence(blockCleanup = true)
         val provider = FakeModelProvider(MutableSharedFlow())
         val (_, viewModel) = ownedViewModel(provider, persistence, LifecyclePreferences())
@@ -113,7 +113,7 @@ class PaperLifecycleTest {
         advanceUntilIdle()
 
         assertEquals(listOf("old-cleanup", "new-save"), persistence.saves)
-        assertEquals(listOf("new"), persistence.current.strokes.map { it.id })
+        assertEquals(listOf("old", "new"), persistence.current.strokes.map { it.id })
         assertFalse(persistence.current.interrupted)
     }
 
@@ -135,7 +135,7 @@ class PaperLifecycleTest {
         advanceUntilIdle()
 
         assertEquals(listOf("new-save"), persistence.saves)
-        assertEquals(listOf("new"), persistence.current.strokes.map { it.id })
+        assertEquals(listOf("old", "new"), persistence.current.strokes.map { it.id })
         assertFalse(persistence.current.interrupted)
         assertEquals(null, handle.get<Long>(RUN_TOKEN_KEY))
     }
@@ -615,7 +615,7 @@ private class DraftRacePersistence(
             } else {
                 initialOldSaved = true
             }
-        } else if (id == "new") {
+        } else if (recovery.strokes.any { it.id == "new" }) {
             saves += "new-save"
         }
         current = recovery

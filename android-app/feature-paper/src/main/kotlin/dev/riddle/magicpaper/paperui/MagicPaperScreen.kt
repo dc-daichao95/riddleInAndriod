@@ -7,8 +7,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -90,21 +94,33 @@ fun MagicPaperScreen(
                 contentDescription = paperLabel
             },
         )
-        Text(
-            text = phaseSummary(state.phase),
-            modifier = Modifier.align(Alignment.TopCenter).padding(8.dp).testTag("paper_status")
-                .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
-            color = Color.Transparent,
-        )
-        if (state.settingsEntryMode == SettingsEntryMode.MAGIC_RUNE_BUTTON) {
-            MagicSettingsRune(
-                onClick = { onIntent(PaperUiIntent.OpenSettings) },
-                motionPolicy = effectiveRuneMotionPolicy,
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .fillMaxWidth()
+                .windowInsetsPadding(contentInsets)
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Text(
+                text = phaseSummary(state.phase),
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .windowInsetsPadding(contentInsets)
-                    .padding(8.dp),
+                    .weight(1f)
+                    .background(statusBackground(state.phase), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .testTag("paper_status")
+                    .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFF3A342A),
             )
+            if (state.settingsEntryMode == SettingsEntryMode.MAGIC_RUNE_BUTTON) {
+                MagicSettingsRune(
+                    onClick = { onIntent(PaperUiIntent.OpenSettings) },
+                    motionPolicy = effectiveRuneMotionPolicy,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
         }
         if (state.reply.isNotEmpty()) {
             Text(
@@ -144,6 +160,13 @@ fun MagicPaperScreen(
             }
         }
     }
+}
+
+private fun statusBackground(phase: PaperPhase): Color = when (phase) {
+    PaperPhase.RecognitionPreparationFailed,
+    PaperPhase.RecognitionFailed,
+    PaperPhase.Failed -> Color(0xFFF2D8CD)
+    else -> Color(0xE6EEE7D8)
 }
 
 @Composable
@@ -210,10 +233,14 @@ private fun helpBodyResource(mode: SettingsEntryMode): Int = when (mode) {
 private fun phaseSummary(phase: PaperPhase) = stringResource(when (phase) {
     PaperPhase.Listening -> R.string.paper_ready
     PaperPhase.Preparing -> R.string.paper_preparing
+    PaperPhase.PreparingRecognition -> R.string.paper_preparing_recognition
+    PaperPhase.Recognizing -> R.string.paper_recognizing
     PaperPhase.Thinking -> R.string.paper_thinking
     PaperPhase.Streaming -> R.string.paper_reply_appearing
     PaperPhase.Completed -> R.string.paper_completed
     PaperPhase.Cancelled -> R.string.paper_cancelled
     PaperPhase.Interrupted -> R.string.paper_interrupted
+    PaperPhase.RecognitionPreparationFailed -> R.string.paper_recognition_preparation_failed
+    PaperPhase.RecognitionFailed -> R.string.paper_recognition_failed
     PaperPhase.Failed -> R.string.paper_failed
 })

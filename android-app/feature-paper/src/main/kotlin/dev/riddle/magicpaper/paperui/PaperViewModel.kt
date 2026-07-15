@@ -16,9 +16,13 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-enum class PaperPhase { Listening, Preparing, Thinking, Streaming, Completed, Cancelled, Interrupted, Failed }
+enum class PaperPhase {
+    Listening, Preparing, PreparingRecognition, Recognizing, Thinking, Streaming, Completed,
+    Cancelled, Interrupted, RecognitionPreparationFailed, RecognitionFailed, Failed,
+}
 
 data class PaperUiState(
     val renderModel: PaperRenderModel = PaperRenderModel(),
@@ -28,7 +32,13 @@ data class PaperUiState(
     val portraitLocked: Boolean = false,
     val settingsEntryMode: SettingsEntryMode = SettingsEntryMode.MAGIC_RUNE_BUTTON,
 ) {
-    val canCancel: Boolean get() = phase == PaperPhase.Preparing || phase == PaperPhase.Thinking || phase == PaperPhase.Streaming
+    val canCancel: Boolean get() = phase in setOf(
+        PaperPhase.Preparing,
+        PaperPhase.PreparingRecognition,
+        PaperPhase.Recognizing,
+        PaperPhase.Thinking,
+        PaperPhase.Streaming,
+    )
 }
 
 sealed interface PaperUiIntent {
@@ -72,6 +82,9 @@ class PaperViewModel(
     private val savedStateHandle: SavedStateHandle,
     private val workerDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val questionMarkClassifier: QuestionMarkClassifier = QuestionMarkClassifier(),
+    private val beforeSubmittedInkOwnership: suspend () -> Unit = {},
+    private val beforePreparingStatePublished: suspend () -> Unit = {},
+    private val afterInactivityDeadlineBeforeJobOwnership: suspend () -> Unit = {},
     private val clock: AppClock = object : AppClock {
         override fun elapsedRealtimeMillis() = System.nanoTime() / 1_000_000L
         override fun wallClockMillis() = System.currentTimeMillis()
@@ -84,12 +97,15 @@ class PaperViewModel(
     private val turnGeneration = AtomicLong()
     private val draftRevision = AtomicLong()
     private val latestDraftWrite = AtomicReference<DraftWrite?>()
+    private val submittedInk = AtomicReference<SubmittedInk?>()
+    // Serializes turn ownership with ink-restoring stop transitions. Never call suspend code while held.
+    private val turnOwnershipLock = Any()
     private val persistenceMutex = Mutex()
 
     private var activeStroke: MutableStroke? = null
-    private var inactivityJob: Job? = null
-    private var activeTurnJob: Job? = null
-    private var settingsOpen = false
+    private val inactivityJob = AtomicReference<Job?>()
+    private val activeTurnJob = AtomicReference<Job?>()
+    private val settingsOpen = AtomicBoolean(false)
 
     init {
         val recoveryBaselineRevision = draftRevision.get()
@@ -148,7 +164,7 @@ class PaperViewModel(
         when (intent) {
             PaperUiIntent.Cancel -> cancelActiveTurn()
             PaperUiIntent.ShowHelp -> {
-                inactivityJob?.cancel()
+                cancelScheduledTurn()
                 mutableState.update { it.copy(helpVisible = true) }
             }
             PaperUiIntent.HideHelp -> {
@@ -156,7 +172,7 @@ class PaperViewModel(
                 scheduleCommitIfNeeded()
             }
             PaperUiIntent.SettingsClosed -> {
-                settingsOpen = false
+                settingsOpen.set(false)
                 scheduleCommitIfNeeded()
             }
             PaperUiIntent.OpenSettings -> openSettings()
@@ -189,27 +205,48 @@ class PaperViewModel(
     }
 
     private fun openSettings() {
-        settingsOpen = true
-        inactivityJob?.cancel()
+        settingsOpen.set(true)
+        stopActiveTurn(PaperPhase.Listening, clearReply = true)
+        cancelScheduledTurn()
         mutableEffects.tryEmit(PaperEffect.OpenSettings)
     }
 
     private fun scheduleCommitIfNeeded() {
-        inactivityJob?.cancel()
-        if (settingsOpen || mutableState.value.helpVisible || mutableState.value.renderModel.strokes.isEmpty()) return
+        cancelScheduledTurn()
+        if (settingsOpen.get() || mutableState.value.helpVisible || mutableState.value.renderModel.strokes.isEmpty()) return
         val generation = turnGeneration.incrementAndGet()
         val deadline = clock.deadlineAfter(INACTIVITY_MILLIS)
-        inactivityJob = viewModelScope.launch(workerDispatcher) {
-            deadline.await()
-            activeTurnJob = this.coroutineContext[Job]
-            runTurn(generation)
+        lateinit var job: Job
+        job = viewModelScope.launch(workerDispatcher, start = CoroutineStart.LAZY) {
+            try {
+                deadline.await()
+                afterInactivityDeadlineBeforeJobOwnership()
+                val activated = synchronized(turnOwnershipLock) {
+                    if (!job.isActive || generation != turnGeneration.get() || settingsOpen.get() ||
+                        inactivityJob.get() !== job || activeTurnJob.get() != null
+                    ) {
+                        false
+                    } else if (inactivityJob.compareAndSet(job, null)) {
+                        activeTurnJob.set(job)
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (activated) runTurn(generation, job)
+            } finally {
+                inactivityJob.compareAndSet(job, null)
+                activeTurnJob.compareAndSet(job, null)
+            }
         }
+        inactivityJob.getAndSet(job)?.cancel()
+        job.start()
     }
 
-    private suspend fun runTurn(generation: Long) {
+    private suspend fun runTurn(generation: Long, ownerJob: Job) {
         val strokes = mutableState.value.renderModel.strokes
         val runDraftRevision = draftRevision.get()
-        if (strokes.isEmpty() || settingsOpen || generation != turnGeneration.get()) return
+        if (strokes.isEmpty() || settingsOpen.get() || generation != turnGeneration.get()) return
         if (questionMarkClassifier.isLargeQuestionMark(strokes)) {
             mutableState.update { it.copy(helpVisible = true, phase = PaperPhase.Listening) }
             return
@@ -217,6 +254,7 @@ class PaperViewModel(
 
         var pageImage: RasterizedPage? = null
         var markerAttempted = false
+        var submission: SubmittedInk? = null
         try {
             val page = ConversationPage("active-page", hasVisibleInk = true)
             val committedAtMillis = clock.elapsedRealtimeMillis()
@@ -230,8 +268,42 @@ class PaperViewModel(
             )
             conversationState = commit.state
             check(conversationState is ConversationState.Drinking)
-            mutableState.update {
-                it.copy(renderModel = PaperRenderModel(emptyList(), dissolveStage = 0), phase = PaperPhase.Preparing, reply = "")
+            beforeSubmittedInkOwnership()
+            val candidate = SubmittedInk(generation, strokes)
+            val ownershipAcquired = synchronized(turnOwnershipLock) {
+                if (!ownerJob.isActive || activeTurnJob.get() !== ownerJob ||
+                    generation != turnGeneration.get() || settingsOpen.get() || submittedInk.get() != null
+                ) false
+                else {
+                    submittedInk.set(candidate)
+                    true
+                }
+            }
+            if (!ownershipAcquired) return
+            submission = candidate
+            var preparingPublished = false
+            while (!preparingPublished) {
+                val current = mutableState.value
+                beforePreparingStatePublished()
+                when (synchronized(turnOwnershipLock) {
+                    if (!ownerJob.isActive || activeTurnJob.get() !== ownerJob ||
+                        generation != turnGeneration.get() || settingsOpen.get() || submittedInk.get() !== candidate
+                    ) {
+                        PreparingPublication.STALE
+                    } else {
+                        val preparing = current.copy(
+                            renderModel = PaperRenderModel(emptyList(), dissolveStage = 0),
+                            phase = PaperPhase.Preparing,
+                            reply = "",
+                        )
+                        if (mutableState.compareAndSet(current, preparing)) PreparingPublication.PUBLISHED
+                        else PreparingPublication.RETRY
+                    }
+                }) {
+                    PreparingPublication.STALE -> return
+                    PreparingPublication.PUBLISHED -> preparingPublished = true
+                    PreparingPublication.RETRY -> Unit
+                }
             }
             awaitDraftWrite(runDraftRevision)
             val markerPersisted = persistenceMutex.withLock {
@@ -255,7 +327,18 @@ class PaperViewModel(
 
             val selected = modelSelection.selected()
             check(selected.capabilities.streaming) { "Selected model does not support streaming" }
-            val routed = turnInputRouter.route(selected.capabilities, strokes).getOrThrow()
+            val routed = turnInputRouter.route(selected.capabilities, strokes) { status ->
+                if (generation == turnGeneration.get()) {
+                    mutableState.update {
+                        it.copy(
+                            phase = when (status) {
+                                HandwritingRecognitionStatus.PREPARING_MODEL -> PaperPhase.PreparingRecognition
+                                HandwritingRecognitionStatus.RECOGNIZING -> PaperPhase.Recognizing
+                            },
+                        )
+                    }
+                }
+            }.getOrThrow()
             val request = when (routed) {
                 is TurnInput.RecognizedText -> ModelRequest(selected.modelId, listOf(Message(MessageRole.USER, routed.text)))
                 is TurnInput.PageImage -> {
@@ -312,41 +395,82 @@ class PaperViewModel(
                 }
             }
             throw cancelled
-        } catch (_: Exception) {
+        } catch (failure: Exception) {
             persistenceMutex.withLock {
                 cleanInterruptedRunBestEffort(generation, runDraftRevision, strokes, markerAttempted)
             }
             if (isCurrentRun(generation, runDraftRevision)) {
                 mutableState.update { current ->
                     current.copy(
-                        phase = PaperPhase.Failed,
+                        phase = when ((failure as? InputRoutingError.RecognitionFailed)?.error) {
+                            is HandwritingRecognitionError.ModelDownloadFailed -> PaperPhase.RecognitionPreparationFailed
+                            is HandwritingRecognitionError -> PaperPhase.RecognitionFailed
+                            null -> if (failure is InputRoutingError.BlankRecognition) PaperPhase.RecognitionFailed else PaperPhase.Failed
+                        },
                         renderModel = if (current.reply.isEmpty()) PaperRenderModel(strokes) else current.renderModel,
                     )
                 }
             }
         } finally {
+            submission?.let { owned ->
+                synchronized(turnOwnershipLock) { submittedInk.compareAndSet(owned, null) }
+            }
             pageImage?.close()
-            if (activeTurnJob == currentCoroutineContext()[Job]) activeTurnJob = null
+            activeTurnJob.compareAndSet(currentCoroutineContext()[Job], null)
         }
     }
 
     private fun cancelActiveTurn() {
         if (!mutableState.value.canCancel) return
-        turnGeneration.incrementAndGet()
-        inactivityJob?.cancel()
-        activeTurnJob?.cancel()
-        mutableState.update { it.copy(phase = PaperPhase.Cancelled) }
+        stopActiveTurn(PaperPhase.Cancelled, clearReply = false)
     }
 
     private fun interruptForWriting() {
-        inactivityJob?.cancel()
-        if (mutableState.value.canCancel) {
-            turnGeneration.incrementAndGet()
-            activeTurnJob?.cancel()
-            mutableState.update { it.copy(renderModel = PaperRenderModel(), phase = PaperPhase.Listening, reply = "") }
-        } else if (mutableState.value.phase != PaperPhase.Listening) {
-            mutableState.update { it.copy(renderModel = PaperRenderModel(), phase = PaperPhase.Listening, reply = "") }
+        if (!stopActiveTurn(PaperPhase.Listening, clearReply = true) &&
+            mutableState.value.phase != PaperPhase.Listening
+        ) {
+            mutableState.update { it.copy(phase = PaperPhase.Listening, reply = "") }
         }
+    }
+
+    private fun stopActiveTurn(phase: PaperPhase, clearReply: Boolean): Boolean {
+        var scheduledToCancel: Job? = null
+        var activeToCancel: Job? = null
+        val stopped = synchronized(turnOwnershipLock) {
+            val generation = turnGeneration.get()
+            val submission = submittedInk.get()?.takeIf { it.generation == generation }
+            val sourceInk = submission?.strokes.orEmpty()
+            val current = mutableState.value
+            scheduledToCancel = inactivityJob.getAndSet(null)
+            activeToCancel = activeTurnJob.getAndSet(null)
+            if (sourceInk.isEmpty() && !current.canCancel && scheduledToCancel == null && activeToCancel == null) {
+                false
+            } else {
+                if (submission != null) submittedInk.compareAndSet(submission, null)
+                turnGeneration.incrementAndGet()
+                mutableState.update { latest ->
+                    latest.copy(
+                        renderModel = PaperRenderModel(mergeStrokes(sourceInk, latest.renderModel.strokes)),
+                        phase = phase,
+                        reply = if (clearReply) "" else latest.reply,
+                    )
+                }
+                true
+            }
+        }
+        if (!stopped) return false
+        scheduledToCancel?.cancel()
+        activeToCancel?.takeUnless { it === scheduledToCancel }?.cancel()
+        return true
+    }
+
+    private fun cancelScheduledTurn() {
+        inactivityJob.getAndSet(null)?.cancel()
+    }
+
+    private fun mergeStrokes(first: List<PaperStroke>, second: List<PaperStroke>): List<PaperStroke> {
+        val firstIds = first.asSequence().map { it.id }.toHashSet()
+        return first + second.filterNot { it.id in firstIds }
     }
 
     private fun persistDraft(strokes: List<PaperStroke>) {
@@ -412,8 +536,8 @@ class PaperViewModel(
 
     override fun onCleared() {
         turnGeneration.incrementAndGet()
-        inactivityJob?.cancel()
-        activeTurnJob?.cancel()
+        cancelScheduledTurn()
+        activeTurnJob.getAndSet(null)?.cancel()
         super.onCleared()
     }
 
@@ -423,6 +547,8 @@ class PaperViewModel(
 
     private data class MutableStroke(val id: String, val tool: PaperTool, val points: MutableList<NormalizedPoint>)
     private data class DraftWrite(val revision: Long, val ack: CompletableDeferred<Result<Unit>>)
+    private data class SubmittedInk(val generation: Long, val strokes: List<PaperStroke>)
+    private enum class PreparingPublication { STALE, PUBLISHED, RETRY }
     private class ProviderStreamFailure(val error: ModelError) : Exception("Provider stream failed")
 
     companion object {
