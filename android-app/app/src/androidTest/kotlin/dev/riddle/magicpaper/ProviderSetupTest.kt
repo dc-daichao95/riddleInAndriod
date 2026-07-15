@@ -31,7 +31,24 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.test.espresso.Espresso.pressBack
+import dev.riddle.magicpaper.model.ModelDescriptor
+import dev.riddle.magicpaper.model.ModelDiscoveryResult
+import dev.riddle.magicpaper.model.ModelEvent
+import dev.riddle.magicpaper.model.ModelProvider
+import dev.riddle.magicpaper.model.ModelRequest
+import dev.riddle.magicpaper.model.ProviderDescriptor
+import dev.riddle.magicpaper.model.ValidationResult
+import dev.riddle.magicpaper.security.CredentialError
+import dev.riddle.magicpaper.security.CredentialResult
+import dev.riddle.magicpaper.security.CredentialStore
+import dev.riddle.magicpaper.security.CredentialTransactionJournal
+import dev.riddle.magicpaper.security.CredentialTransactionJournalStore
+import dev.riddle.magicpaper.settings.CredentialTransactionCoordinator
 import dev.riddle.magicpaper.settings.PresetKind
+import dev.riddle.magicpaper.settings.ProviderFactory
+import dev.riddle.magicpaper.settings.ProviderProfileRepository
+import dev.riddle.magicpaper.settings.ProviderSettingsRoute
+import dev.riddle.magicpaper.settings.ProviderSettingsViewModel
 import dev.riddle.magicpaper.settings.ProviderSettingsScreen
 import dev.riddle.magicpaper.settings.ProviderSettingsUiState
 import dev.riddle.magicpaper.settings.ProviderProfileUiModel
@@ -46,6 +63,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 class ProviderSetupTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -165,6 +185,65 @@ class ProviderSetupTest {
         compose.runOnIdle { assertEquals("manual-model", validatedModel) }
     }
 
+    @Test fun production_callback_preserves_preset_into_catalog_selection() {
+        val viewModel = providerViewModel(ModelDiscoveryResult.Success(listOf(
+            ModelDescriptor("a-model", "A", ModelCapabilities(streaming = true)),
+            ModelDescriptor("gpt-4.1-mini", "Preset", ModelCapabilities(streaming = true)),
+        )))
+
+        submitOpenAiPresetThroughProductionRoute(viewModel)
+
+        compose.waitUntil(5_000) { viewModel.state.value.modelSelection is ProviderModelSelection.Catalog }
+        compose.runOnIdle { assertEquals("gpt-4.1-mini", viewModel.state.value.selectedDiscoveredModelId) }
+    }
+
+    @Test fun production_callback_preserves_preset_into_manual_fallback() {
+        val viewModel = providerViewModel(ModelDiscoveryResult.Unsupported)
+
+        submitOpenAiPresetThroughProductionRoute(viewModel)
+
+        compose.waitUntil(5_000) { viewModel.state.value.modelSelection is ProviderModelSelection.ManualFallback }
+        compose.runOnIdle {
+            assertEquals(
+                ProviderModelSelection.ManualFallback(
+                    "gpt-4.1-mini",
+                    ManualFallbackReason.UNSUPPORTED_DISCOVERY,
+                ),
+                viewModel.state.value.modelSelection,
+            )
+        }
+        compose.onNodeWithTag("provider_manual_model").assertTextContains("gpt-4.1-mini")
+    }
+
+    private fun submitOpenAiPresetThroughProductionRoute(viewModel: ProviderSettingsViewModel) {
+        viewModel.applyPreset(PresetKind.OPENAI, "OpenAI")
+        viewModel.reviewEndpoint()
+        compose.activity.runOnUiThread {
+            compose.activity.setContent {
+                MaterialTheme { ProviderSettingsRoute(viewModel) }
+            }
+        }
+        compose.onNodeWithTag("provider_api_key").performTextInput("test-secret")
+        compose.onNodeWithTag("provider_validate_models").performClick()
+    }
+
+    private fun providerViewModel(discovery: ModelDiscoveryResult): ProviderSettingsViewModel {
+        val profiles = InstrumentationProfiles()
+        val credentials = InstrumentationCredentials()
+        return ProviderSettingsViewModel(
+            profiles,
+            credentials,
+            InstrumentationProviderFactory(discovery),
+            CredentialTransactionCoordinator(
+                profiles,
+                credentials,
+                InstrumentationJournal(),
+                Dispatchers.Unconfined,
+                nonce = { "test" },
+            ),
+        )
+    }
+
     private fun openSettings() {
         compose.onNodeWithTag("magic_rune_touch").performClick()
         compose.waitForIdle()
@@ -189,5 +268,61 @@ class ProviderSetupTest {
 
     private fun assertInside(actual: Rect, expected: Rect) {
         assertTrue("$actual not inside $expected", actual.left >= expected.left && actual.top >= expected.top && actual.right <= expected.right && actual.bottom <= expected.bottom)
+    }
+}
+
+private class InstrumentationProfiles : ProviderProfileRepository {
+    private val profiles = mutableListOf<ProviderConfiguration>()
+    private var selected: String? = null
+    override suspend fun list() = profiles.toList()
+    override suspend fun upsert(profile: ProviderConfiguration) {
+        profiles.removeAll { it.id == profile.id }
+        profiles += profile
+    }
+    override suspend fun delete(id: String) { profiles.removeAll { it.id == id } }
+    override suspend fun select(id: String?) { selected = id }
+    override suspend fun selectedId() = selected
+}
+
+private class InstrumentationCredentials : CredentialStore {
+    private val values = mutableMapOf<String, String>()
+    override suspend fun put(alias: String, secret: String): CredentialResult<Unit> {
+        values[alias] = secret
+        return CredentialResult.Success(Unit)
+    }
+    override suspend fun read(alias: String): CredentialResult<String> =
+        values[alias]?.let { CredentialResult.Success(it) }
+            ?: CredentialResult.Failure(CredentialError.Unavailable)
+    override suspend fun delete(alias: String): CredentialResult<Unit> {
+        values.remove(alias)
+        return CredentialResult.Success(Unit)
+    }
+}
+
+private class InstrumentationJournal : CredentialTransactionJournalStore {
+    private var value: CredentialTransactionJournal? = null
+    override fun read(): CredentialResult<CredentialTransactionJournal?> = CredentialResult.Success(value)
+    override fun write(journal: CredentialTransactionJournal): CredentialResult<Unit> {
+        value = journal
+        return CredentialResult.Success(Unit)
+    }
+    override fun clear(): CredentialResult<Unit> {
+        value = null
+        return CredentialResult.Success(Unit)
+    }
+}
+
+private class InstrumentationProviderFactory(
+    private val discovery: ModelDiscoveryResult,
+) : ProviderFactory {
+    override fun create(configuration: ProviderConfiguration): ModelProvider = object : ModelProvider {
+        override val descriptor = ProviderDescriptor(
+            configuration.type,
+            configuration.displayName,
+            configuration.capabilities,
+        )
+        override fun stream(request: ModelRequest): Flow<ModelEvent> = emptyFlow()
+        override suspend fun listModels() = discovery
+        override suspend fun validate(configuration: ProviderConfiguration) = ValidationResult.Valid
     }
 }

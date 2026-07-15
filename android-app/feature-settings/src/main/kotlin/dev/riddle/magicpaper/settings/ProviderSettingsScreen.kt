@@ -150,7 +150,7 @@ fun ProviderSettingsScreen(
                         enabled = state.controlsEnabled && (credential.text.isNotBlank() || state.profiles.any { it.configuration.id == editor.id }),
                         onClick = {
                             onValidateAndDiscover(
-                                editor.draft().copy(defaultModelId = null),
+                                editor.draft(),
                                 credential.text.toString().toCharArray(),
                                 state.confirmedHost.orEmpty(),
                                 ::clearCredential,
