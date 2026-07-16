@@ -1,15 +1,12 @@
 package dev.riddle.magicpaper.paper
 
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class Unicode15GraphemeSegmenterTest {
     @Test fun `passes every official Unicode 15 grapheme break conformance case`() {
-        val repository = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
-            .first { it.resolve("AGENTS.md").isFile }
-        val fixture = repository.resolve("android-app/paper-engine/src/test/resources/unicode/15.0.0/GraphemeBreakTest.txt")
+        val fixture = AndroidProjectTestPaths.paperEngine.resolve("src/test/resources/unicode/15.0.0/GraphemeBreakTest.txt")
         assertTrue(fixture.isFile, "official pinned GraphemeBreakTest.txt is missing")
         var cases = 0
         fixture.forEachLine { raw ->

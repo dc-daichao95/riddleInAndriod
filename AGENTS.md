@@ -2,11 +2,11 @@
 
 ## 1. Scope and product direction
 
-This repository contains one active product: the Riddle Magic Paper Android application under `android-app/`. It supports Android 13/API 33 through Android 16/API 36. Historical reMarkable/Rust code is available only through Git history and is not a working-tree dependency or development target.
+This repository contains one active product: the Riddle Magic Paper Android application under `android-app/`. It supports Android 13/API 33 through Android 16/API 36. Historical reMarkable/Rust code is available only through Git history at pre-cleanup revision `a1a155e` and is not a working-tree dependency or development target.
 
 The application is handwriting-first, supports OpenAI-compatible and DeepSeek-compatible services through Provider-neutral contracts, and treats credentials, conversations, recognized text, tool calls, ink/images, and device actions as sensitive. Keep the Gradle root at `android-app/`.
 
-The approved Android-only cleanup intentionally replaced the prior root `README.md` and deleted the retired `doc/detailed-design.md`; those migration decisions are documented in `doc/specs/android-only-repository-cleanup.md`. Preserve all unrelated dirty files and untracked assets.
+The approved Android-only cleanup intentionally replaced the prior root `README.md` and deleted the retired `doc/detailed-design.md`, which remains available at pre-cleanup revision `a1a155e`; those migration decisions are documented in `doc/specs/android-only-repository-cleanup.md`. Preserve all unrelated dirty files and untracked assets.
 
 ## 2. Instruction priority
 

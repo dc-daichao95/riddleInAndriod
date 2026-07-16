@@ -14,9 +14,7 @@ import java.util.concurrent.CancellationException
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class BundledTypefaceGlyphSourceTest {
-    private val repository = generateSequence(File(requireNotNull(System.getProperty("user.dir")))) { it.parentFile }
-        .first { it.resolve("AGENTS.md").isFile }
-    private val fonts = repository.resolve("android-app/paper-engine/src/main/assets/fonts")
+    private val fonts = AndroidProjectTestPaths.paperEngine.resolve("src/main/assets/fonts")
 
     @Test fun `official bundled typefaces rasterize thin and trace latin and cjk paths`() {
         val source = AndroidTypefaceReplyGlyphSource(
